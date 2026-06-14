@@ -392,7 +392,8 @@ adb -s <デバイスのIPアドレス>:5555 shell "stop pix_airtuner; stop airtu
 `crash_guard.sh` が自動起動し以下を監視します:
 
 - `crash_dump32` フォーク爆弾（Android 8 のクラッシュダンプ暴走）
-- MemAvailable < 350 MB → Node.js を強制終了
+- MemAvailable < 600 MB → `stop_android_tv.sh` で Android TV アプリを回収（2 分クールダウン）
+- MemAvailable < 350 MB → Node.js を強制終了（最終手段）
 
 Node.js のヒープは `--max-old-space-size=256` で制限されています。
 

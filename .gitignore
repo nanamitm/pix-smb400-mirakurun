@@ -1,6 +1,7 @@
 # ---- Secrets (NEVER commit) ----
-boot/rsa_key.pem          # RSA private key for USB Boot signing
-.acas_key                 # ACAS master key (device-specific)
+boot/rsa_key.pem                    # RSA private key for USB Boot signing
+boot/usb_boot_files/rsa_key.pem    # same key, copied by make_usb_boot.py
+.acas_key                           # ACAS master key (device-specific)
 
 # ---- Build artifacts ----
 # Binaries built by `make build-bins` (src/ -> bin/)
@@ -12,6 +13,9 @@ boot/rsa_key.pem          # RSA private key for USB Boot signing
 boot/bootargs.bin
 boot/root_rsa_pub_crc.bin
 boot/initramfs_patched.uimg
+boot/usb_boot_files/bootargs.bin
+boot/usb_boot_files/root_rsa_pub_crc.bin
+boot/usb_boot_files/initramfs_patched.uimg
 
 # ---- Pulled from device (proprietary Android system libraries) ----
 /android-libs/

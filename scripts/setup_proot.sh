@@ -13,6 +13,13 @@
 
 set -euo pipefail
 
+ADB_TARGET="${1:-}"
+if [ -n "$ADB_TARGET" ]; then
+    ADB="adb -s $ADB_TARGET"
+else
+    ADB="adb"
+fi
+
 DEVICE_TMP=/data/local/tmp
 ROOTFS_DIR="$DEVICE_TMP/mirakurun-root"
 WORK_DIR=$(mktemp -d)
@@ -29,18 +36,18 @@ curl -L -o "$WORK_DIR/alpine-rootfs.tar.gz" "$ALPINE_URL"
 gunzip "$WORK_DIR/alpine-rootfs.tar.gz"   # → $WORK_DIR/alpine-rootfs.tar
 
 echo "=== Step 2: Push and extract Alpine rootfs ==="
-adb shell mkdir -p "$ROOTFS_DIR"
-adb push "$WORK_DIR/alpine-rootfs.tar" "$DEVICE_TMP/alpine-rootfs.tar"
-adb shell "cd '$ROOTFS_DIR' && tar xf '$DEVICE_TMP/alpine-rootfs.tar'"
-adb shell "rm '$DEVICE_TMP/alpine-rootfs.tar'"
+$ADB shell mkdir -p "$ROOTFS_DIR"
+$ADB push "$WORK_DIR/alpine-rootfs.tar" "$DEVICE_TMP/alpine-rootfs.tar"
+$ADB shell "cd '$ROOTFS_DIR' && tar xf '$DEVICE_TMP/alpine-rootfs.tar'"
+$ADB shell "rm '$DEVICE_TMP/alpine-rootfs.tar'"
 
 echo "=== Step 3: Configure Alpine DNS ==="
-adb shell "echo 'nameserver 8.8.8.8' > '$ROOTFS_DIR/etc/resolv.conf'"
+$ADB shell "echo 'nameserver 8.8.8.8' > '$ROOTFS_DIR/etc/resolv.conf'"
 
 echo "=== Step 4: Install Node.js + npm inside chroot ==="
 # adb runs as root, so we chroot directly (same mechanism as the runtime).
 # proc + /dev are needed for apk (TLS uses /dev/urandom).
-adb shell '
+$ADB shell '
 set -e
 ROOTFS=/data/local/tmp/mirakurun-root
 mount -t proc proc "$ROOTFS/proc" 2>/dev/null || true
@@ -55,4 +62,4 @@ exit $RC
 echo ""
 echo "=== Setup complete ==="
 echo "Node.js version:"
-adb shell "chroot '$ROOTFS_DIR' /bin/sh -c 'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; node --version'"
+$ADB shell "chroot '$ROOTFS_DIR' /bin/sh -c 'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; node --version'"
