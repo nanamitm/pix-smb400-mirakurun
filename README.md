@@ -2,6 +2,8 @@
 
 PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）で BS4K（ISDB-S3）を Mirakurun 経由で受信するためのガイドです。
 
+<img width="1052" height="822" alt="image" src="https://github.com/user-attachments/assets/fd564f7a-a7b6-4b5c-941d-a226162a170c" />
+
 ## 免責事項
 
 本プロジェクトのファイル・スクリプト・ドキュメントは、技術的な調査・学習を目的としています。
@@ -159,8 +161,10 @@ sudo umount /mnt/PIXBOOT
 **2-2. USB ブートピンをショートしながら電源を投入する**
 
 1. USB Boot ピンをショートした状態を維持しながら電源を入れる
-2. BootROM が USB メモリを検出し、外部 RSA 鍵で検証を行う
-3. カスタム initramfs でシステムが起動する
+   <img width="1575" height="1181" alt="image" src="https://github.com/user-attachments/assets/09c1fc0b-332a-4d23-bf2b-5097678871e6" />
+
+3. BootROM が USB メモリを検出し、外部 RSA 鍵で検証を行う
+4. カスタム initramfs でシステムが起動する
 
 ---
 
