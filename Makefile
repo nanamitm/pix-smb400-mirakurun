@@ -134,7 +134,7 @@ deploy-mirakurun:
 
 # 初回のみ: Alpine ARM32 + Node.js をデバイスに構築（インターネット接続必要）
 setup-runtime:
-	bash scripts/setup_proot.sh
+	bash scripts/setup_proot.sh $(ADB_TARGET)
 
 # ---- 起動・停止 ----
 

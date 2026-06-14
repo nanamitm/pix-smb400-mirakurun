@@ -7,6 +7,7 @@
 ROOTFS=/data/local/tmp/mirakurun-root
 MIRAKURUN=/data/local/tmp/mirakurun
 LOG=/data/local/tmp/mirakurun.log
+PIDFILE=/data/local/tmp/mirakurun-start.pid
 
 # --- Preflight: start only if the Mirakurun setup is fully present. ---
 # If anything required is missing we exit immediately WITHOUT stopping
@@ -28,6 +29,16 @@ if [ -n "$missing" ]; then
     echo "[mirakurun] not starting — missing file(s):$missing" >> "$LOG"
     exit 1
 fi
+
+# Singleton: if another instance is already running, exit immediately.
+if [ -f "$PIDFILE" ]; then
+    existing=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
+        echo "[mirakurun] already running (pid=$existing), exiting." >> "$LOG"
+        exit 0
+    fi
+fi
+echo $$ > "$PIDFILE"
 
 # ACAS master key is optional for startup but required for descrambling.
 if [ ! -s /data/local/tmp/.acas_key ]; then
@@ -127,4 +138,5 @@ chroot "$ROOTFS" /bin/sh -l -c "
 code=$?
 
 echo "[mirakurun] process exited (code=$code) — not restarting (safe mode)." >> "$LOG"
+rm -f "$PIDFILE" 2>/dev/null || true
 exit "$code"

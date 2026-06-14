@@ -57,7 +57,7 @@ case "$CHANNEL" in
         # Pipeline runs in host Android context (chroot to host root) so Android
         # shared libs are accessible.  Run in background so trap fires on SIGTERM.
         chroot /proc/1/root /system/bin/sh -c \
-            "$BINDIR/tuner-stream-bs-ng 0 2 $IF_KHZ $CHANNEL 0x20 | $BINDIR/b61dec -key $ACAS_KEY" &
+            "$BINDIR/tuner-stream-bs-ng 0 2 $IF_KHZ $CHANNEL | $BINDIR/b61dec -key $ACAS_KEY" &
         CHROOT_PID=$!
         trap "kill -9 $CHROOT_PID 2>/dev/null; pkill -9 -f 'tuner-stream-bs-ng 0 2 $IF_KHZ' 2>/dev/null; pkill -9 -f 'b61dec -key $ACAS_KEY' 2>/dev/null; pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
