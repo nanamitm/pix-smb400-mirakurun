@@ -161,9 +161,14 @@ start:
 stop:
 	-$(ADB) shell "pkill -9 Mirakurun 2>/dev/null; \
 	    kill -9 \$$(pgrep -f 'start_mirakurun[.]sh' 2>/dev/null) 2>/dev/null; \
+	    pkill -9 -f 'node.*server\.js' 2>/dev/null; \
 	    pkill -9 b61dec 2>/dev/null; \
 	    pkill -9 tunertest 2>/dev/null; \
-	    pkill -9 -f tuner-stream 2>/dev/null; true"
+	    pkill -9 -f tuner-stream 2>/dev/null; \
+	    sleep 1; true"
+	-$(ADB) shell " \
+	    grep mirakurun-root /proc/mounts | while read d mp r; do echo \"\$$mp\"; done | sort -r | \
+	    while read mp; do umount \"\$$mp\" 2>/dev/null || true; done; true"
 	@echo "Stopped."
 
 restart: stop start
