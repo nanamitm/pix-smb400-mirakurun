@@ -38,6 +38,18 @@ service pix-netdbg /init_pix_netdbg.sh
     oneshot
     seclabel u:r:init:s0
 
+on property:ro.debuggable=1
+    stop console
+    start rootconsole
+
+service rootconsole /system/bin/sh
+    class core
+    console
+    disabled
+    user root
+    group root
+    seclabel u:r:su:s0
+
 on property:sys.boot_completed=1
     start mirakurun_proxy
 
