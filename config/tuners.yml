@@ -1,0 +1,15 @@
+# SMB400 tuner — single physical tuner supports GR / BS / BS4K.
+# smb400-tuner.sh derives IF frequency and mode from the channel value alone.
+# No commandVars needed: GR=integer 13-62, BS=BSxx_y, BS4K=integer ≥40000.
+- name: SMB400
+  types:
+    # - GR
+    # - BS
+    - BS4K
+  command: /data/local/tmp/smb400-tuner.sh <channel>
+  # No tlvDecoder: BS4K descrambling is done inside smb400-tuner.sh (the command
+  # outputs already-descrambled TLV). Mirakurun's chain is tuner → TLVFilter →
+  # tlvDecoder, but TLVFilter can't parse scrambled TLV, so a downstream decoder
+  # would be starved. Descrambling in the command lets the TLVFilter parse it.
+  tlvDecoder: null
+  isDisabled: false

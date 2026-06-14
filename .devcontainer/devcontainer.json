@@ -1,0 +1,28 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/debian
+{
+	"name": "PIX-SMB400 BS4K",
+	// Build from the local Dockerfile (apt packages installed there).
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"features": {
+		// build_initramfs.sh and make_usb_boot.py use `docker run`.
+		"ghcr.io/devcontainers/features/docker-in-docker:3": {
+			"moby": false,
+			"azureDnsAutoDetection": true,
+			"installDockerBuildx": true,
+			"version": "latest",
+			"dockerDashComposeVersion": "v2"
+		}
+	}
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+
+	// Configure tool-specific properties.
+	// "customizations": {},
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+}

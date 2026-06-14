@@ -1,0 +1,28 @@
+PIX-SMB400 BS4K Mirakurun setup
+Copyright 2026 tsuyopon123
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------
+Third-party components bundled in this repository
+------------------------------------------------------------------------
+
+This product bundles configuration headers from the OpenSSL Project,
+used to cross-compile b61dec. They are licensed under the Apache
+License 2.0 and retain their original copyright headers:
+
+  include/openssl/configuration.h
+  include/openssl/opensslconf.h
+  src/openssl-conf/openssl/configuration.h
+  src/openssl-conf/openssl/opensslconf.h
+
+  Copyright The OpenSSL Project Authors. All Rights Reserved.
+  https://www.openssl.org/
+
+------------------------------------------------------------------------
+Related components (NOT bundled — deployed/built separately)
+------------------------------------------------------------------------
+
+  Mirakurun (Apache-2.0)  — cloned and built by the user during setup.
+  OpenSSL libssl/libcrypto — linked at runtime from the device's own
+                             Android system libraries (not redistributed).

@@ -1,0 +1,48 @@
+# SMB400 channel list — BS4K only
+# smb400-tuner.sh derives IF frequency from stream ID (integer ≥40000).
+# Channels 45280 and 45745 removed — signal absent on this device.
+#
+# serviceId: BS4K はサービススキャン対象外のため、サービス登録には serviceId の
+#            明示が必須。channel はチューナへ渡すストリームID、serviceId は SDT 上の
+#            実サービスID（別物。実機の SDT から確認した値）。
+
+# --- BS4K (ISDB-S3, 衛星4K) ---
+- name: 'BS4K 45168'
+  type: BS4K
+  channel: '45168'
+  serviceId: 151
+
+- name: 'BS4K 45169'
+  type: BS4K
+  channel: '45169'
+  serviceId: 171
+
+- name: 'BS4K 45170'
+  type: BS4K
+  channel: '45170'
+  serviceId: 141
+
+- name: 'BS4K 45232'
+  type: BS4K
+  channel: '45232'
+  serviceId: 211
+
+- name: 'BS4K 45234'
+  type: BS4K
+  channel: '45234'
+  serviceId: 221
+
+- name: 'BS4K 45328'
+  type: BS4K
+  channel: '45328'
+  serviceId: 101
+
+- name: 'BS4K 45329'
+  type: BS4K
+  channel: '45329'
+  serviceId: 161
+
+- name: 'BS4K 45330'
+  type: BS4K
+  channel: '45330'
+  serviceId: 181
