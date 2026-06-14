@@ -1,6 +1,6 @@
-# PIX-SMB400 BS4K Mirakurun セットアップガイド
+# PIX-SMB400 Mirakurun
 
-PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）で BS4K（ISDB-S3）を Mirakurun 経由で受信するためのガイドです。
+PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Mirakurun を実行し、BS4K（ISDB-S3）を受信するためのプロジェクトです。
 
 <img width="1052" height="822" alt="image" src="https://github.com/user-attachments/assets/fd564f7a-a7b6-4b5c-941d-a226162a170c" />
 
@@ -349,7 +349,7 @@ curl -s http://<デバイスのIPアドレス>:40772/api/services | python3 -m j
 
 ---
 
-## 運用コマンド
+## コマンド
 
 ```sh
 make start    # Mirakurun 起動
