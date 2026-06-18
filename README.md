@@ -1,6 +1,6 @@
 # PIX-SMB400 Mirakurun
 
-PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Mirakurun を実行し、BS4K（ISDB-S3）を受信するためのプロジェクトです。
+PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Mirakurun を実行し、BS4K / BS8K（ISDB-S3）を受信するためのプロジェクトです。
 
 <img width="1052" height="822" alt="image" src="https://github.com/user-attachments/assets/fd564f7a-a7b6-4b5c-941d-a226162a170c" />
 
@@ -45,7 +45,6 @@ Part 3: 起動・確認
 |------|------|
 | PIX-SMB400 本体 | USB ブートピンにアクセスできる状態 |
 | USB メモリ | FAT32 フォーマット、1 GB 以上 |
-| kernel.img | ファームウェアから抽出した PIX-SMB400 のカーネルイメージ。ブートファイルのビルドに使用 |
 | ビルド環境 | Docker（ブートファイル用）、`gcc-arm-linux-gnueabi` + `libssl-dev`（バイナリのビルド用） |
 | ACAS マスターキー | 64 文字の hex |
 
@@ -74,11 +73,11 @@ Part 3: 起動・確認
 │   └── setup_proot.sh               Alpine + Node.js 初回セットアップ
 ├── config/
 │   ├── tuners.yml                   Mirakurun チューナー設定
-│   ├── channels.yml                 BS4K チャンネル一覧（8ch）
+│   ├── channels.yml                 BS4K / BS8K チャンネル一覧
 │   └── server.yml                   Mirakurun サーバー設定
 └── src/                             バイナリの C ソースコード（make build-bins でビルド）
-    ├── b61dec.c                     ACAS BS4K デスクランブラー
-    ├── tuner-stream-bs-ng.c         BS4K（ISDB-S3）チューナー
+    ├── b61dec.c                     ACAS BS4K / BS8K デスクランブラー
+    ├── tuner-stream-bs-ng.c         BS4K / BS8K（ISDB-S3）チューナー
     └── startup.c                    Android PIE 用 _start エントリポイント
 ```
 
@@ -88,12 +87,34 @@ Part 3: 起動・確認
 
 > **仕組みの詳細・各ファイルのビルド方法は [BOOT.md](BOOT.md) を参照してください。**
 
+### Step 0: kernel.img を入手して展開する
+
+ブートファイル（`initramfs_patched.uimg`）のビルドには PIX-SMB400 のカーネルイメージ `kernel.img` が必要です。
+これはメーカー公式の配布ファームウェアから取得します。
+
+**0-2. kernel.img を展開して initramfs を取り出す**
+
+`kernel.img` を binwalk で展開すると、内部に格納された initramfs（cpio アーカイブ）が取り出せます。
+取り出した cpio ファイルが、次の Step でブートイメージ（`initramfs_patched.uimg`）をビルドする元になります。
+
+```sh
+# 要件: binwalk
+binwalk -e kernel.img
+# → _kernel.img.extracted/988000 が initramfs の cpio アーカイブ
+```
+
+> `988000` は kernel.img 内での initramfs のオフセット（16 進）に由来するファイル名です。
+> binwalk のバージョンによって抽出先ディレクトリ名やファイル名が変わることがあります。
+> その場合は `_kernel.img.extracted/` 内で `file` コマンドが `ASCII cpio archive` と判定するファイルを使用してください。
+
+---
+
 ### Step 1: ブートファイルをビルドして USB メモリを準備する
 
 **1-1. ブートファイルをビルドする**
 
 USB メモリに必要な 3 ファイル（`bootargs.bin` / `root_rsa_pub_crc.bin` / `initramfs_patched.uimg`）を `boot/` のスクリプトで生成します。
-`initramfs_patched.uimg` のビルドには、用意した `kernel.img` から取り出した initramfs を使用します。
+`initramfs_patched.uimg` のビルドには、[Step 0](#step-0-kernelimg-を入手して展開する) で取り出した initramfs cpio を使用します。
 
 ```sh
 # 1) bootargs.bin / root_rsa_pub_crc.bin を生成
@@ -103,10 +124,9 @@ pip install pycryptodome -q
 cd /usb_boot && python3 make_usb_boot.py
 "
 
-# 2) kernel.img から initramfs を取り出して initramfs_patched.uimg をビルド
+# 2) Step 0 で取り出した initramfs cpio から initramfs_patched.uimg をビルド
 cd ..
-binwalk -e kernel.img
-bash boot/build_initramfs.sh /path/to/_kernel.img.extracted/988000
+bash boot/build_initramfs.sh _kernel.img.extracted/988000
 ```
 
 **1-2. FAT32 でフォーマットする**
@@ -313,6 +333,32 @@ Streaming BS4K 45168 for 5s...
 - `7f 02 ...` または `7f 03 ...` → **正常**（IPv4 / IPv6 TLV コンテンツ）
 - `7f ff 00 00 ...` → 未復号（b61dec の ACAS 認証失敗）→ Step 7 を確認
 - 出力なし → チューナーが応答していない → `make log` でログを確認
+
+### BS8Kの受信について
+
+BS8K（左旋・ISDB-S3）にも対応しています。`config/channels.yml` には次のエントリが含まれています。
+
+| name | type | channel | serviceId |
+|------|------|---------|-----------|
+| BS8K NHK | BS4K | 45280 | 102 |
+
+- BS8K は右旋ではなく**左旋**で送出されるため、`smb400-tuner.sh` が channel `45280`（実 tlvStreamId）を IF `2472MHz` にマップして受信します。`type` は BS4K と同じ ISDB-S3 経路のため `BS4K` のままです。
+- 復号経路は BS4K と共通で、`b61dec` による ACAS デスクランブルで復号されます。
+- ストリーム確認:
+
+```sh
+curl -s --max-time 8 "http://<デバイスのIPアドレス>:40772/api/channels/BS4K/45280/stream" \
+  | od -v -t x1 | head -4
+# 先頭が 7f 02 / 7f 03 なら正常（復号済み TLV）。サービス名は「ＮＨＫ　ＢＳ８Ｋ」(serviceId 102)
+```
+
+- 視聴も BS4K と同じく mmt/tlv 対応 FFmpeg で行えます:
+
+```sh
+ffplay http://<デバイスのIPアドレス>:40772/api/channels/BS4K/45280/stream
+```
+
+> BS8K は 7680×4320 / HEVC 10bit のため、再生・録画には相応の処理能力を持つ視聴環境が必要です。
 
 ### ffplay でリアルタイム視聴
 
