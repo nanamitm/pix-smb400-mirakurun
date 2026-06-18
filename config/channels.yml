@@ -46,3 +46,13 @@
   type: BS4K
   channel: '45330'
   serviceId: 181
+
+# --- BS8K (ISDB-S3, 衛星8K, 左旋) ---
+# NHK BS8K。種別は BS4K に混在（同じ ISDB-S3 経路）。channel は実 tlvStreamId=45280
+# （左旋。右旋IFでは受からず以前 "signal absent" として除外されていた値）。
+# Mirakurun は channel を filterTlvStreamId として SDT を選別するため実 tlvStreamId 必須。
+# smb400-tuner.sh が 45280 を IF 2472MHz にマップする。
+- name: 'BS8K NHK'
+  type: BS4K
+  channel: '45280'
+  serviceId: 102

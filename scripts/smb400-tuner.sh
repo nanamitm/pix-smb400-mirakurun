@@ -49,9 +49,10 @@ case "$CHANNEL" in
             exit 1
         fi
         case "$CHANNEL" in
-            45168|45169|45170) IF_KHZ=1164560 ;;  # BS7  transponder
-            45232|45234)       IF_KHZ=1241280 ;;  # BS11 transponder
-            45328|45329|45330) IF_KHZ=1356360 ;;  # BS17 transponder
+            45168|45169|45170) IF_KHZ=1164560 ;;  # BS7  transponder (右旋)
+            45232|45234)       IF_KHZ=1241280 ;;  # BS11 transponder (右旋)
+            45328|45329|45330) IF_KHZ=1356360 ;;  # BS17 transponder (右旋)
+            45280)             IF_KHZ=2472000 ;;  # BS8K (NHK BS8K, 左旋 11.97682GHz / IF 2472MHz, serviceId 102)
             *) echo "smb400-tuner.sh: unknown BS4K channel '$CHANNEL'" >&2; exit 1 ;;
         esac
         # Pipeline runs in host Android context (chroot to host root) so Android
