@@ -111,6 +111,19 @@ bash boot/get_kernel.sh -o .
 3. AES-256-CBC で復号して Android OTA zip (`.bin`) を得る
 4. OTA zip から `boot.img` を取り出し、先頭 0x6000 バイトの HiSilicon ヘッダを除去して `kernel.img` を得る
 
+> **注意: 復号時に以下のエラーが出ますが正常です。**
+>
+> ```
+> Using -iter or -pbkdf2 would be better.
+> bad decrypt
+> 40A7DEAD84790000:error:1C80006B:Provider routines:ossl_cipher_generic_block_final:wrong final block length:../providers/implementations/ciphers/ciphercommon.c:465:
+> ```
+>
+> - `Using -iter or -pbkdf2 would be better.` … OpenSSL 3.x が旧来の鍵導出方式に対して出す警告です。
+> - `bad decrypt` / `wrong final block length` … このファームは標準的な PKCS#7 パディングではないため、**最終ブロックのパディング検証だけが失敗**して OpenSSL が非ゼロ終了します。データ本体は正しく復号されています。
+>
+> そのため `get_kernel.sh` は復号コマンドの終了コードを無視し（`|| true`）、出力が正しい ZIP かどうかをスクリプト側で検証する作りになっています。最後に `[+] Done: ./kernel.img` と表示され `kernel.img` が生成されていれば成功です。
+
 **0-2. kernel.img を展開して initramfs を取り出す**
 
 `kernel.img` を binwalk で展開すると、内部に格納された initramfs（cpio アーカイブ）が取り出せます。
