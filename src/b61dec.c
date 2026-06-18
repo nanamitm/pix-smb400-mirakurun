@@ -684,8 +684,13 @@ int main(int argc, char **argv) {
     /* I/O buffers: use a single large buffer for both input and output.
      * We process TLV packets in-place (decrypt directly into the buffer)
      * and write out in large chunks to minimize syscalls. */
-    #define IOBUF_SIZE   (4 * 1024 * 1024)
-    #define PRESCAN_SIZE (512 * 1024)   /* read ahead to find first ECM */
+    #define IOBUF_SIZE   (16 * 1024 * 1024)
+    /* Read-ahead window for locating the first ECM before any output is
+     * emitted.  It must span the offset of the first ECM in the stream;
+     * too small a window misses it and leaks still-encrypted leading
+     * packets.  The window only fills until the first ECM is found, so the
+     * typical added latency is small. */
+    #define PRESCAN_SIZE (8 * 1024 * 1024)
     uint8_t *buf = (uint8_t *)malloc(IOBUF_SIZE);
     if (!buf) { perror("malloc"); return 1; }
     int buf_len = 0;       /* total valid bytes in buf */
