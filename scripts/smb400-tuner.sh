@@ -56,7 +56,13 @@ case "$CHANNEL" in
         chroot /proc/1/root /system/bin/sh -c \
             "$BINDIR/tuner-stream-bs 0 1 $IF_KHZ $TSID | $BINDIR/b21dec" &
         CHROOT_PID=$!
-        trap "kill -9 $CHROOT_PID 2>/dev/null; pkill -9 -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; pkill -9 -f b21dec 2>/dev/null; pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
+        trap "pkill -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+              pkill -f b21dec 2>/dev/null; \
+              sleep 1; \
+              kill -9 $CHROOT_PID 2>/dev/null; \
+              pkill -9 -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+              pkill -9 -f b21dec 2>/dev/null; \
+              pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
         pkill -9 -f "tuner-stream-bs 0 1 $IF_KHZ" 2>/dev/null || true
         pkill -9 tunertest 2>/dev/null || true
@@ -80,7 +86,13 @@ case "$CHANNEL" in
         chroot /proc/1/root /system/bin/sh -c \
             "$BINDIR/tuner-stream-bs-ng 0 2 $IF_KHZ $CHANNEL | $BINDIR/b61dec -key $ACAS_KEY" &
         CHROOT_PID=$!
-        trap "kill -9 $CHROOT_PID 2>/dev/null; pkill -9 -f 'tuner-stream-bs-ng 0 2 $IF_KHZ' 2>/dev/null; pkill -9 -f 'b61dec -key $ACAS_KEY' 2>/dev/null; pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
+        trap "pkill -f 'tuner-stream-bs-ng 0 2 $IF_KHZ' 2>/dev/null; \
+              pkill -f 'b61dec -key $ACAS_KEY' 2>/dev/null; \
+              sleep 1; \
+              kill -9 $CHROOT_PID 2>/dev/null; \
+              pkill -9 -f 'tuner-stream-bs-ng 0 2 $IF_KHZ' 2>/dev/null; \
+              pkill -9 -f 'b61dec -key $ACAS_KEY' 2>/dev/null; \
+              pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
         # tuner-stream-bs-ng spawns tunertest as a child but does not kill it on exit
         pkill -9 -f "tuner-stream-bs-ng 0 2 $IF_KHZ" 2>/dev/null || true
@@ -96,11 +108,19 @@ case "$CHANNEL" in
         # ※ 地デジのワークキー Kw はチップが地上波 EMM 受信時に取得する。地上波を
         #   一度も受信していないチップでは ECM が視聴不可(rc≠0x0800)になり得る。
         chroot /proc/1/root /system/bin/sh -c \
-            "$BINDIR/tuner-stream-ng 0 0 0x20 $IF_KHZ 6000 | $BINDIR/b21dec" &
+            "$BINDIR/tuner-stream-ng 0 0 32 $IF_KHZ 6000 | $BINDIR/b21dec" &
         CHROOT_PID=$!
-        trap "kill -9 $CHROOT_PID 2>/dev/null; pkill -9 -f 'tuner-stream-ng 0 0 0x20 $IF_KHZ' 2>/dev/null; pkill -9 -f b21dec 2>/dev/null; pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
+        # SIGTERM first so tuner-stream-ng can call dmx_deinit() — SIGKILL skips it and
+        # leaves a stale DMX channel that blocks the next run.
+        trap "pkill -f 'tuner-stream-ng 0 0 32 $IF_KHZ' 2>/dev/null; \
+              pkill -f b21dec 2>/dev/null; \
+              sleep 1; \
+              kill -9 $CHROOT_PID 2>/dev/null; \
+              pkill -9 -f 'tuner-stream-ng 0 0 32 $IF_KHZ' 2>/dev/null; \
+              pkill -9 -f b21dec 2>/dev/null; \
+              pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
-        pkill -9 -f "tuner-stream-ng 0 0 0x20 $IF_KHZ" 2>/dev/null || true
+        pkill -9 -f "tuner-stream-ng 0 0 32 $IF_KHZ" 2>/dev/null || true
         pkill -9 tunertest 2>/dev/null || true
         ;;
     *)
