@@ -244,7 +244,7 @@ PC 側で Mirakurun をビルドしてからデバイスに転送します。
 
 ```sh
 # リポジトリのルートに tmp/ を作ってクローン・ビルド
-git clone https://github.com/tsuyopon123/Mirakurun-BS4K.git tmp/Mirakurun-BS4K
+git clone https://github.com/nanamitm/Mirakurun-BS4K.git tmp/Mirakurun-BS4K
 cd tmp/Mirakurun-BS4K && npm install && npm run build && cd ../..
 
 # デバイスにデプロイ
