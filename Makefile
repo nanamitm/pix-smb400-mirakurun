@@ -24,7 +24,8 @@ ifndef ADB_TARGET
     ADB_TARGET := $(_DETECTED)
   endif
 endif
-ADB        := adb.exe -s $(ADB_TARGET)
+ADB_CMD    := $(if $(shell command -v adb.exe 2>/dev/null),adb.exe,adb)
+ADB        := $(ADB_CMD) -s $(ADB_TARGET)
 DEVICE_IP  := $(firstword $(subst :, ,$(ADB_TARGET)))
 DEVICE_TMP := /data/local/tmp
 MIRAKURUN  := $(DEVICE_TMP)/mirakurun
