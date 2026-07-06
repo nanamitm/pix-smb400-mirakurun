@@ -15,9 +15,9 @@ set -euo pipefail
 
 ADB_TARGET="${1:-}"
 if [ -n "$ADB_TARGET" ]; then
-    ADB="adb -s $ADB_TARGET"
+    ADB="adb.exe -s $ADB_TARGET"
 else
-    ADB="adb"
+    ADB="adb.exe"
 fi
 
 DEVICE_TMP=/data/local/tmp

@@ -24,7 +24,7 @@ ifndef ADB_TARGET
     ADB_TARGET := $(_DETECTED)
   endif
 endif
-ADB        := adb -s $(ADB_TARGET)
+ADB        := adb.exe -s $(ADB_TARGET)
 DEVICE_IP  := $(firstword $(subst :, ,$(ADB_TARGET)))
 DEVICE_TMP := /data/local/tmp
 MIRAKURUN  := $(DEVICE_TMP)/mirakurun
@@ -141,6 +141,7 @@ push-all: push-bins push-scripts push-config
 deploy-mirakurun:
 	@echo "[*] Deploying Mirakurun JS to device..."
 	$(ADB) shell mkdir -p $(MIRAKURUN)/config $(MIRAKURUN)/db $(MIRAKURUN)/logo-data
+	$(ADB) shell "rm -rf $(MIRAKURUN)/lib $(MIRAKURUN)/node_modules"
 	$(ADB) push $(MIRAKURUN_SRC)/lib/          $(MIRAKURUN)/lib/
 	$(ADB) push $(MIRAKURUN_SRC)/node_modules/ $(MIRAKURUN)/node_modules/
 	$(ADB) push $(MIRAKURUN_SRC)/package.json  $(MIRAKURUN)/package.json
