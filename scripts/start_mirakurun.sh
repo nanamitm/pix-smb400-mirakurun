@@ -119,10 +119,14 @@ if ! test -f "$ROOTFS/data/local/tmp/mirakurun/lib/server.js"; then
     mount --bind /data/local/tmp "$ROOTFS/data/local/tmp" 2>/dev/null || true
 fi
 
-# Run Mirakurun ONCE — intentionally NO restart loop.
+# Run Mirakurun ONCE — intentionally NO auto-restart loop.
 # On this device a crash-looping decoder can spawn a crash_dump32 fork-bomb
-# and brick the box, so we never auto-restart.  If node exits, we log and
-# stop; recover by running this again (`make start`) or rebooting.
+# and brick the box, so we never auto-restart on crash.
+# Web UI の Restart ボタンはトリガーファイルを置いて終了するため、
+# その場合のみ再起動する（クラッシュによる自動再起動は行わない）。
+RESTART_TRIGGER=/data/local/tmp/.mirakurun-restart
+rm -f "$RESTART_TRIGGER" 2>/dev/null || true
+
 chroot "$ROOTFS" /bin/sh -l -c "
     export SERVER_CONFIG_PATH=/data/local/tmp/mirakurun/config/server.yml
     export TUNERS_CONFIG_PATH=/data/local/tmp/mirakurun/config/tuners.yml
@@ -130,6 +134,7 @@ chroot "$ROOTFS" /bin/sh -l -c "
     export SERVICES_DB_PATH=/data/local/tmp/mirakurun/db/services.json
     export PROGRAMS_DB_PATH=/data/local/tmp/mirakurun/db/programs.json
     export LOGO_DATA_DIR_PATH=/data/local/tmp/mirakurun/logo-data
+    export MIRAKURUN_RESTART=1
     cd /data/local/tmp/mirakurun
     node --max-semi-space-size=32 \
          --max-old-space-size=256 \
@@ -137,6 +142,13 @@ chroot "$ROOTFS" /bin/sh -l -c "
 " >> "$LOG" 2>&1
 code=$?
 
-echo "[mirakurun] process exited (code=$code) — not restarting (safe mode)." >> "$LOG"
 rm -f "$PIDFILE" 2>/dev/null || true
+
+if [ -f "$RESTART_TRIGGER" ]; then
+    rm -f "$RESTART_TRIGGER"
+    echo "[mirakurun] restart requested via Web UI — restarting..." >> "$LOG"
+    exec sh /data/local/tmp/start_mirakurun.sh
+fi
+
+echo "[mirakurun] process exited (code=$code) — not restarting (safe mode)." >> "$LOG"
 exit "$code"
