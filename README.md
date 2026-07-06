@@ -1,6 +1,6 @@
 # PIX-SMB400 Mirakurun
 
-PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Mirakurun を実行し、地上波（ISDB-T）・BS（ISDB-S）・BS4K / BS8K（ISDB-S3）を受信するためのプロジェクトです。
+PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Mirakurun を実行し、地上波（ISDB-T）・BS（ISDB-S）・110度CS（ISDB-S）・BS4K / BS8K（ISDB-S3）を受信するためのプロジェクトです。
 
 <img width="1052" height="822" alt="image" src="https://github.com/user-attachments/assets/fd564f7a-a7b6-4b5c-941d-a226162a170c" />
 
@@ -98,7 +98,7 @@ VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen
 │   └── setup_proot.sh               Alpine + Node.js 初回セットアップ
 ├── config/
 │   ├── tuners.yml                   Mirakurun チューナー設定
-│   ├── channels.yml                 BS / BS4K / BS8K チャンネル一覧
+│   ├── channels.yml                 GR / BS / CS / BS4K / BS8K チャンネル一覧
 │   └── server.yml                   Mirakurun サーバー設定
 └── src/                             バイナリの C ソースコード（make build-bins でビルド）
     ├── b61dec.c                     ACAS BS4K / BS8K デスクランブラー（ARIB STD-B61 / AES）
@@ -450,6 +450,43 @@ ffplay  "http://<デバイスのIPアドレス>:40772/api/services/<serviceId>/s
 
 > 2K BS は受信できるトランスポンダ・サービスが地域/契約により異なります。
 > `config/tuners.yml` で `BS` タイプが有効になっている必要があります（本リポジトリでは有効化済み）。
+
+### CS（110度CS）の受信について
+
+110度CS（ISDB-S, MPEG-TS）にも対応しています。
+BS(2K) と同じ **MULTI2**（B-CAS 方式, CA_system_id 0x0005）でスクランブルされており、`smb400-tuner.sh` 内の **`b21dec`** がオンデバイスの ACAS チップ経由で解除します（B-CAS カード不要、BS(2K) と共通の経路）。
+
+`config/channels.yml` には ND02〜ND24 の全12トランスポンダが含まれます。
+
+| channel | IF (kHz) |
+|---------|----------|
+| ND02 | 1613000 |
+| ND04 | 1653000 |
+| ND06 | 1693000 |
+| ND08 | 1733000 |
+| ND10 | 1773000 |
+| ND12 | 1813000 |
+| ND14 | 1853000 |
+| ND16 | 1893000 |
+| ND18 | 1933000 |
+| ND20 | 1973000 |
+| ND22 | 2013000 |
+| ND24 | 2053000 |
+
+- channel は `NDxx`（xx=偶数のトランスポンダ番号）形式で、`smb400-tuner.sh` が IF = `1613000 + (xx-2)/2 × 40000` kHz を算出して `tuner-stream-bs`（mode=1, streamId=0=auto）でロックします。
+- BS(2K) と異なり、1トランスポンダ = 単一 TS に複数サービスが通常の MPTS として多重されているため、BS のような TSID 対応表は不要です（`streamId=0` の自動選択でそのまま受かります）。
+- `serviceId` は省略してあり、Mirakurun のサービススキャンが各局を自動登録します。
+- 実機 IF スキャン（2026-07-06）で ND02〜ND24 全12トランスポンダのロック・復号（AXN・BBC・CNNj・Mnet・MusicJapan・LaLaTV・QVC・Dlife・SKY STAGE・TBSチャンネル・日テレNEWS24・GAORA・MONDO TV 等）を確認済みです（[sun-ele.co.jp のCS-IF表](https://sun-ele.co.jp/support/how/bs_freq.html)と一致）。
+- ストリーム確認・視聴は BS(2K) と同様です:
+
+```sh
+curl -s --max-time 8 "http://<デバイスのIPアドレス>:40772/api/services/<serviceId>/stream" -o cs.ts
+ffprobe cs.ts
+ffplay  "http://<デバイスのIPアドレス>:40772/api/services/<serviceId>/stream"
+```
+
+> CS は受信できるトランスポンダ・サービスが契約により異なります。
+> `config/tuners.yml` で `CS` タイプが有効になっている必要があります（本リポジトリでは有効化済み）。
 
 ### ffplay でリアルタイム視聴
 

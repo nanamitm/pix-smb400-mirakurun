@@ -201,6 +201,55 @@
   channel: 'BS23_3'
   serviceId: 260
 
+# --- CS (110度CS, ISDB-S 2K相当, 右旋) ---
+# BS(2K)と同じ MULTI2 スクランブルを smb400-tuner.sh 内の b21dec が ACAS チップ経由で
+# 解除する（平文 MPEG-TS を Mirakurun 標準 TSFilter で処理）。
+# channel は ND02〜ND24（業界標準のトランスポンダ番号、偶数のみ）。
+# smb400-tuner.sh が IF = 1613000 + (xx-2)/2*40000 kHz を算出して
+# tuner-stream-bs（mode=1, streamId=0=auto）でロックする。
+# BS と異なり 1 トランスポンダ = 単一 TS に複数サービスが通常の MPTS として多重されて
+# いるため、BS のような TSID 対応表は不要。serviceId は省略し、Mirakurun のサービス
+# スキャンに自動登録を任せる。
+#
+# 実機 IF スキャン（2026-07-06）で ND02〜ND24 全12トランスポンダのロック・復号を
+# 確認済み（sun-ele.co.jp 掲載の CS-IF 表と一致）。
+- name: 'CS ND02'
+  type: CS
+  channel: 'ND02'
+- name: 'CS ND04'
+  type: CS
+  channel: 'ND04'
+- name: 'CS ND06'
+  type: CS
+  channel: 'ND06'
+- name: 'CS ND08'
+  type: CS
+  channel: 'ND08'
+- name: 'CS ND10'
+  type: CS
+  channel: 'ND10'
+- name: 'CS ND12'
+  type: CS
+  channel: 'ND12'
+- name: 'CS ND14'
+  type: CS
+  channel: 'ND14'
+- name: 'CS ND16'
+  type: CS
+  channel: 'ND16'
+- name: 'CS ND18'
+  type: CS
+  channel: 'ND18'
+- name: 'CS ND20'
+  type: CS
+  channel: 'ND20'
+- name: 'CS ND22'
+  type: CS
+  channel: 'ND22'
+- name: 'CS ND24'
+  type: CS
+  channel: 'ND24'
+
 # 有料局（本機は未契約のため rc=0xa103 で復号不可。契約のあるチップなら有効化可）
 # - name: 'WOWOWプライム'
 #   type: BS

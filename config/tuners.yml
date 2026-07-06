@@ -1,15 +1,16 @@
-# SMB400 tuner — single physical tuner supports GR / BS / BS4K.
+# SMB400 tuner — single physical tuner supports GR / BS / CS / BS4K.
 # smb400-tuner.sh derives IF frequency and mode from the channel value alone.
-# No commandVars needed: GR=integer 13-62, BS=BSxx_y, BS4K=integer ≥40000.
+# No commandVars needed: GR=integer 13-62, BS=BSxx_y, CS=NDxx, BS4K=integer ≥40000.
 - name: SMB400
   types:
     - GR      # 地上波 (ISDB-T, MULTI2) — smb400-tuner.sh descrambles via b21dec
     - BS      # 従来2K BS (ISDB-S, MULTI2) — smb400-tuner.sh descrambles via b21dec
+    - CS      # 110度CS (ISDB-S, MULTI2) — smb400-tuner.sh descrambles via b21dec
     - BS4K
   command: /data/local/tmp/smb400-tuner.sh <channel>
-  # No tlvDecoder / decoder: GR・BS(2K)・BS4K いずれも smb400-tuner.sh 内で復号する
-  # ため、コマンドは復号済みの MPEG-TS (GR/BS) または TLV (BS4K) を出力する。
-  # GR/BS は Mirakurun 標準 TSFilter、BS4K は TLVFilter で処理。下流デコーダは
+  # No tlvDecoder / decoder: GR・BS(2K)・CS・BS4K いずれも smb400-tuner.sh 内で復号する
+  # ため、コマンドは復号済みの MPEG-TS (GR/BS/CS) または TLV (BS4K) を出力する。
+  # GR/BS/CS は Mirakurun 標準 TSFilter、BS4K は TLVFilter で処理。下流デコーダは
   # スクランブル済みデータを受け取れず破綻するため何も設定しない。
   tlvDecoder: null
   isDisabled: false

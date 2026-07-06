@@ -7,6 +7,7 @@
 # Channel format determines operating mode:
 #   GR:   integer 13-62    → tuner-stream-ng  (MPEG-TS, ISDB-T)
 #   BS:   BSxx_y           → tuner-stream-bs  (MPEG-TS, ISDB-S)
+#   CS:   NDxx             → tuner-stream-bs  (MPEG-TS, ISDB-S, 110度CS)
 #   BS4K: integer ≥40000   → tuner-stream-bs-ng | b61dec (descrambled TLV, ISDB-S3)
 #
 # BS4K descrambling note:
@@ -62,6 +63,31 @@ case "$CHANNEL" in
         # arg: the chip holds the broadcaster work key (Kw) from prior live EMM.
         chroot /proc/1/root /system/bin/sh -c \
             "$BINDIR/tuner-stream-bs 0 1 $IF_KHZ $TSID | $BINDIR/b21dec" &
+        CHROOT_PID=$!
+        trap "pkill -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+              pkill -f b21dec 2>/dev/null; \
+              sleep 1; \
+              kill -9 $CHROOT_PID 2>/dev/null; \
+              pkill -9 -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+              pkill -9 -f b21dec 2>/dev/null; \
+              pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
+        wait $CHROOT_PID
+        pkill -9 -f "tuner-stream-bs 0 1 $IF_KHZ" 2>/dev/null || true
+        pkill -9 tunertest 2>/dev/null || true
+        ;;
+    ND[0-9][0-9])
+        # CS (110度CS, ISDB-S 2K相当): NDxx (xx=偶数トランスポンダ番号)。
+        # IF = 1613000 + (xx-2)/2 * 40000 kHz。実機IFスキャン(2026-07-06)で
+        # ND02〜ND24 の全12トランスポンダのロック・復号を確認済み
+        # (sun-ele.co.jp掲載のCS-IF表と一致)。
+        # BSと違い1トランスポンダ=単一TSで複数サービスが通常のMPTSとして多重されて
+        # いるため、BSのようなTSID対応表は不要。streamId=0(auto)でそのまま受かる。
+        NDSTR=${CHANNEL#ND}
+        ND=$((10#$NDSTR))    # strip leading zero, force base10
+        IF_KHZ=$((1613000 + (ND - 2) / 2 * 40000))
+        # 2K CS も MULTI2(B-CAS) スクランブルのため、BS(2K)と同じ b21dec 経路で復号。
+        chroot /proc/1/root /system/bin/sh -c \
+            "$BINDIR/tuner-stream-bs 0 1 $IF_KHZ 0 | $BINDIR/b21dec" &
         CHROOT_PID=$!
         trap "pkill -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
               pkill -f b21dec 2>/dev/null; \
