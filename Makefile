@@ -14,8 +14,9 @@
 # ---------- 変更可能な設定 ----------
 # ADB_TARGET 未指定時は adb devices から自動検出
 # 複数台接続時は明示指定: make <target> ADB_TARGET=192.168.1.126:5555
+ADB_CMD    := $(if $(shell command -v adb.exe 2>/dev/null),adb.exe,adb)
 ifndef ADB_TARGET
-  _DETECTED := $(shell adb devices 2>/dev/null | awk '/\tdevice$$/{print $$1}')
+  _DETECTED := $(shell $(ADB_CMD) devices 2>/dev/null | tr -d '\r' | awk '/\tdevice$$/{print $$1}')
   ifeq ($(words $(_DETECTED)),0)
     $(error No ADB device connected. Run: adb connect <ip>:<port>)
   else ifneq ($(words $(_DETECTED)),1)
@@ -24,7 +25,6 @@ ifndef ADB_TARGET
     ADB_TARGET := $(_DETECTED)
   endif
 endif
-ADB_CMD    := $(if $(shell command -v adb.exe 2>/dev/null),adb.exe,adb)
 ADB        := $(ADB_CMD) -s $(ADB_TARGET)
 DEVICE_IP  := $(firstword $(subst :, ,$(ADB_TARGET)))
 DEVICE_TMP := /data/local/tmp
