@@ -46,8 +46,15 @@ case "$CHANNEL" in
             BS19_0) TSID=18224 ;;
             BS21_0) TSID=18256 ;;
             BS23_0) TSID=18288 ;;  BS23_1) TSID=18801 ;;  BS23_3) TSID=18803 ;;
-            *)      TSID=0 ;;      # 未知: 当該トランスポンダの先頭 TS を自動選択
+            *)      TSID= ;;       # 未知: TSID テーブルに載っていない = 存在しないチャンネル
         esac
+        # TSID 未定義 (偶数 TP や TS インデックス超過など) は即終了。
+        # TSID=0 を tuner-stream-bs に渡すと先頭 TS を返すため、
+        # 存在しないチャンネルでも別 TP のサービスがヒットしてしまう。
+        if [ -z "$TSID" ]; then
+            echo "smb400-tuner.sh: unknown BS channel '$CHANNEL' (not in TSID table)" >&2
+            exit 1
+        fi
         # 2K BS is MULTI2-scrambled (NHK / 有料局). Descramble in-command via the
         # ACAS chip (conventional/B-CAS CAS, APDU P2=0x02) so Mirakurun's TSFilter
         # receives plain MPEG-TS.  b21dec needs the Android linker/vendor libs, so
