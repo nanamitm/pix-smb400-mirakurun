@@ -38,13 +38,13 @@ case "$CHANNEL" in
         # BS TS-ID 表（実機 NIT から導出, 2026-06-21）で BSxx_y → TS-ID を引く。
         case "$CHANNEL" in
             BS01_0) TSID=16400 ;;  BS01_1) TSID=16401 ;;  BS01_2) TSID=16402 ;;
-            BS03_0) TSID=16432 ;;
-            BS05_0) TSID=17488 ;;
+            BS03_0) TSID=16432 ;;  BS03_1) TSID=17969 ;;  BS03_2) TSID=17970 ;;
+            BS05_0) TSID=17488 ;;  BS05_1) TSID=17489 ;;
             BS09_0) TSID=16528 ;;  BS09_2) TSID=16530 ;;
             BS13_0) TSID=16592 ;;  BS13_1) TSID=16593 ;;  BS13_2) TSID=18130 ;;
-            BS15_0) TSID=16625 ;;  BS15_2) TSID=18675 ;;
-            BS19_0) TSID=18224 ;;
-            BS21_0) TSID=18256 ;;
+            BS15_0) TSID=16625 ;;  BS15_1) TSID=16626 ;;  BS15_2) TSID=18675 ;;
+            BS19_0) TSID=18224 ;;  BS19_1) TSID=18225 ;;  BS19_2) TSID=18226 ;;  BS19_3) TSID=18227 ;;
+            BS21_0) TSID=18256 ;;  BS21_1) TSID=18257 ;;  BS21_2) TSID=18258 ;;
             BS23_0) TSID=18288 ;;  BS23_1) TSID=18801 ;;  BS23_3) TSID=18803 ;;
             *)      TSID= ;;       # 未知: TSID テーブルに載っていない = 存在しないチャンネル
         esac
