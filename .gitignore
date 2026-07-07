@@ -1,7 +1,13 @@
 # ---- Secrets (NEVER commit) ----
-boot/rsa_key.pem                    # RSA private key for USB Boot signing
-boot/usb_boot_files/rsa_key.pem    # same key, copied by make_usb_boot.py
-.acas_key                           # ACAS master key (device-specific)
+# NOTE: gitignore treats '#' as a comment ONLY at line start — inline comments
+# after a pattern become part of the pattern and silently break the ignore rule.
+# Keep each secret pattern on its own line with the comment ABOVE it.
+# RSA private key for USB Boot signing
+boot/rsa_key.pem
+# same key, copied by make_usb_boot.py
+boot/usb_boot_files/rsa_key.pem
+# ACAS master key (device-specific)
+.acas_key
 
 # ---- Build artifacts ----
 # Binaries built by `make build-bins` (src/ -> bin/)
@@ -24,6 +30,8 @@ boot/usb_boot_files/initramfs_patched.uimg
 kernel.img
 _*.extracted/
 firmware_extracted/
+# kernel.img symlink + kernel.img.extracted/ (derived, ~12M)
+extractions/
 
 # ---- Work dirs ----
 # Mirakurun-BS4K clone built during `make deploy-mirakurun`
