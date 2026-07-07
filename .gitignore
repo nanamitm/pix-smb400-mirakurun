@@ -33,6 +33,9 @@ firmware_extracted/
 # kernel.img symlink + kernel.img.extracted/ (derived, ~12M)
 extractions/
 
+# ---- scan_bs_tsid.py の候補出力 (差分確認用、コミット不要) ----
+config/bs_tsid.conf.scanned
+
 # ---- Work dirs ----
 # Mirakurun-BS4K clone built during `make deploy-mirakurun`
 /tmp/

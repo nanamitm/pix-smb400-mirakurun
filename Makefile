@@ -139,12 +139,24 @@ push-all: push-bins push-scripts push-config
 	@echo "[+] Done. Run 'make start' to launch Mirakurun."
 
 # 実機 NIT から BS TSID 表 (config/bs_tsid.conf) を生成/検証。
-# チューナー排他のため、視聴/EPG 取得を止めてから実行すること。
+# チューナーは排他のため、Mirakurun を一時停止 → スキャン → 再起動を自動で行う
+# (スキャンが失敗しても Mirakurun は必ず再起動する)。
 # 既定は候補ファイル (config/bs_tsid.conf.scanned) と差分レポートのみ出力。
 # 反映するには WRITE=1 を付ける (MOVED/NEW があれば channels.yml も要更新)。
+# Mirakurun を止めたくない場合は NO_STOP=1 (チューナー使用中は拒否される)。
 scan-bs-tsid:
-	@echo "[*] Scanning BS NIT for TSID table..."
+ifdef NO_STOP
+	@echo "[*] Scanning BS NIT (Mirakurun は停止しない)..."
 	python3 scripts/scan_bs_tsid.py --target $(ADB_TARGET) $(if $(WRITE),--write,)
+else
+	@echo "[*] チューナー確保のため Mirakurun を一時停止します..."
+	@$(MAKE) --no-print-directory stop
+	@echo "[*] Scanning BS NIT for TSID table..."
+	@python3 scripts/scan_bs_tsid.py --target $(ADB_TARGET) $(if $(WRITE),--write,); rc=$$?; \
+	 echo "[*] Mirakurun を再起動します..."; \
+	 $(MAKE) --no-print-directory start; \
+	 exit $$rc
+endif
 
 # 初回のみ: Mirakurun-BS4K JS ファイル一式をデプロイ
 # $(MIRAKURUN_SRC) を GitHub からクローンしてビルド済みであること。
