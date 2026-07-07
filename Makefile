@@ -50,7 +50,7 @@ CFLAGS_ARM   := -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3 \
 
 .PHONY: build-bins android-libs \
         push-all push-bins push-scripts push-config \
-        deploy-mirakurun setup-runtime \
+        deploy-mirakurun setup-runtime scan-bs-tsid \
         start stop restart log test help
 
 # ---- ビルド (src/ → bin/) ----
@@ -137,6 +137,14 @@ push-config:
 
 push-all: push-bins push-scripts push-config
 	@echo "[+] Done. Run 'make start' to launch Mirakurun."
+
+# 実機 NIT から BS TSID 表 (config/bs_tsid.conf) を生成/検証。
+# チューナー排他のため、視聴/EPG 取得を止めてから実行すること。
+# 既定は候補ファイル (config/bs_tsid.conf.scanned) と差分レポートのみ出力。
+# 反映するには WRITE=1 を付ける (MOVED/NEW があれば channels.yml も要更新)。
+scan-bs-tsid:
+	@echo "[*] Scanning BS NIT for TSID table..."
+	python3 scripts/scan_bs_tsid.py --target $(ADB_TARGET) $(if $(WRITE),--write,)
 
 # 初回のみ: Mirakurun-BS4K JS ファイル一式をデプロイ
 # $(MIRAKURUN_SRC) を GitHub からクローンしてビルド済みであること。

@@ -99,6 +99,7 @@ VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen
 ├── config/
 │   ├── tuners.yml                   Mirakurun チューナー設定
 │   ├── channels.yml                 GR / BS / CS / BS4K / BS8K チャンネル一覧
+│   ├── bs_tsid.conf                 BS チャンネル → 実 MPEG TS-ID 表（scan_bs_tsid.py で生成/検証）
 │   └── server.yml                   Mirakurun サーバー設定
 └── src/                             バイナリの C ソースコード（make build-bins でビルド）
     ├── b61dec.c                     ACAS BS4K / BS8K デスクランブラー（ARIB STD-B61 / AES）
@@ -450,6 +451,20 @@ ffplay  "http://<デバイスのIPアドレス>:40772/api/services/<serviceId>/s
 
 > 2K BS は受信できるトランスポンダ・サービスが地域/契約により異なります。
 > `config/tuners.yml` で `BS` タイプが有効になっている必要があります（本リポジトリでは有効化済み）。
+
+#### BS TSID 表（`config/bs_tsid.conf`）とスキャン
+
+BS は 1 トランスポンダに複数 TS が多重されており、ハードのチューナー（`tunertest`）は**実 MPEG TS-ID 単位**で TS を選びます（TSMF 多重ストリームは出力されません）。そのため `smb400-tuner.sh` は `BSxx_y` → 実 TS-ID の対応表が必要です。この表は **`config/bs_tsid.conf`**（外部ファイル）に切り出してあり、編集すればスクリプト本体を触らずに追加・変更できます（ファイルが無い/該当行が無い場合はスクリプト内蔵の既定表へフォールバック）。
+
+TS-ID とトランスポンダの割当は全国標準で滅多に変わりませんが、再編（中継器移動など）が起きたら実機 NIT から表を生成/検証できます:
+
+```sh
+# チューナー排他のため、視聴/EPG 取得を止めてから実行すること
+make scan-bs-tsid            # 差分レポート + 候補 config/bs_tsid.conf.scanned を出力
+make scan-bs-tsid WRITE=1    # config/bs_tsid.conf を実際に更新
+```
+
+1 回の BS 受信で NIT に全トランスポンダ・全 TS が列挙されるため、単一受信で全表を検証できます。ツールは既存の `BSxx_y` ラベルを保持したまま、**NEW**（新局）/ **MOVED**（TS-ID が別トランスポンダへ移動）/ **MISSING**（表にあるが受信されず）を報告します。`MOVED` / `NEW` の際は `config/channels.yml` の `channel` 名も併せて更新してください（IF は `BSxx` 名から算出されるため）。
 
 ### CS（110度CS）の受信について
 
