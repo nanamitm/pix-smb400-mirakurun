@@ -27,6 +27,23 @@ fi
 
 BINDIR=/data/local/tmp
 
+# 外部 BS TSID テーブル。存在すれば内蔵既定表より優先。BS_TSID_CONF で上書き可。
+BS_TSID_CONF=${BS_TSID_CONF:-/data/local/tmp/bs_tsid.conf}
+
+# lookup_bs_tsid <channel> — 外部テーブルから TSID を引く。
+# 書式は "<CHANNEL> <TSID>"（空白区切り、'#' 以降と空行は無視）。
+# 見つかれば TSID を stdout に出力。無ければ何も出力しない（= 呼び側でフォールバック）。
+lookup_bs_tsid() {
+    [ -f "$BS_TSID_CONF" ] || return 0
+    while read -r _ch _tsid _rest; do
+        case "$_ch" in ''|\#*) continue ;; esac
+        if [ "$_ch" = "$1" ]; then
+            printf '%s' "$_tsid"
+            return 0
+        fi
+    done < "$BS_TSID_CONF"
+}
+
 case "$CHANNEL" in
     BS[0-9][0-9]_[0-9])
         # BS (ISDB-S, 従来2K): BSxx_y。xx=トランスポンダ番号で IF を算出。
@@ -36,19 +53,23 @@ case "$CHANNEL" in
         IF_KHZ=$((1049480 + (TP - 1) / 2 * 38360))
         # 1 トランスポンダに複数の相対 TS が多重されており、tunertest(mode=1) は
         # _y(相対インデックス)ではなく実 MPEG TS-ID で TS を選択する。全国共通の
-        # BS TS-ID 表（実機 NIT から導出, 2026-06-21）で BSxx_y → TS-ID を引く。
-        case "$CHANNEL" in
-            BS01_0) TSID=16400 ;;  BS01_1) TSID=16401 ;;  BS01_2) TSID=16402 ;;
-            BS03_0) TSID=16432 ;;  BS03_1) TSID=17969 ;;  BS03_2) TSID=17970 ;;
-            BS05_0) TSID=17488 ;;  BS05_1) TSID=17489 ;;
-            BS09_0) TSID=16528 ;;  BS09_2) TSID=16530 ;;
-            BS13_0) TSID=16592 ;;  BS13_1) TSID=16593 ;;  BS13_2) TSID=18130 ;;
-            BS15_0) TSID=16625 ;;  BS15_1) TSID=16626 ;;  BS15_2) TSID=18675 ;;
-            BS19_0) TSID=18224 ;;  BS19_1) TSID=18225 ;;  BS19_2) TSID=18226 ;;  BS19_3) TSID=18227 ;;
-            BS21_0) TSID=18256 ;;  BS21_1) TSID=18257 ;;  BS21_2) TSID=18258 ;;
-            BS23_0) TSID=18288 ;;  BS23_1) TSID=18801 ;;  BS23_3) TSID=18803 ;;
-            *)      TSID= ;;       # 未知: TSID テーブルに載っていない = 存在しないチャンネル
-        esac
+        # BS TS-ID 表で BSxx_y → TS-ID を引く。まず外部テーブル ($BS_TSID_CONF) を
+        # 参照し、無ければ以下の内蔵既定表（実機 NIT 由来, 2026-06-21）へフォールバック。
+        TSID=$(lookup_bs_tsid "$CHANNEL")
+        if [ -z "$TSID" ]; then
+            case "$CHANNEL" in
+                BS01_0) TSID=16400 ;;  BS01_1) TSID=16401 ;;  BS01_2) TSID=16402 ;;
+                BS03_0) TSID=16432 ;;  BS03_1) TSID=17969 ;;  BS03_2) TSID=17970 ;;
+                BS05_0) TSID=17488 ;;  BS05_1) TSID=17489 ;;
+                BS09_0) TSID=16528 ;;  BS09_2) TSID=16530 ;;
+                BS13_0) TSID=16592 ;;  BS13_1) TSID=16593 ;;  BS13_2) TSID=18130 ;;
+                BS15_0) TSID=16625 ;;  BS15_1) TSID=16626 ;;  BS15_2) TSID=18675 ;;
+                BS19_0) TSID=18224 ;;  BS19_1) TSID=18225 ;;  BS19_2) TSID=18226 ;;  BS19_3) TSID=18227 ;;
+                BS21_0) TSID=18256 ;;  BS21_1) TSID=18257 ;;  BS21_2) TSID=18258 ;;
+                BS23_0) TSID=18288 ;;  BS23_1) TSID=18801 ;;  BS23_3) TSID=18803 ;;
+                *)      TSID= ;;       # 未知: どちらの表にも無い = 存在しないチャンネル
+            esac
+        fi
         # TSID 未定義 (偶数 TP や TS インデックス超過など) は即終了。
         # TSID=0 を tuner-stream-bs に渡すと先頭 TS を返すため、
         # 存在しないチャンネルでも別 TP のサービスがヒットしてしまう。

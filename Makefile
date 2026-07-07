@@ -121,6 +121,7 @@ push-scripts:
 	$(ADB) push scripts/start_mirakurun.sh $(DEVICE_TMP)/start_mirakurun.sh
 	$(ADB) push scripts/stop_android_tv.sh $(DEVICE_TMP)/stop_android_tv.sh
 	$(ADB) push scripts/crash_guard.sh     $(DEVICE_TMP)/crash_guard.sh
+	$(ADB) push config/bs_tsid.conf        $(DEVICE_TMP)/bs_tsid.conf
 	$(ADB) shell chmod +x \
 	    $(DEVICE_TMP)/smb400-tuner.sh \
 	    $(DEVICE_TMP)/start_mirakurun.sh \
