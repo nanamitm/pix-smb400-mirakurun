@@ -30,9 +30,9 @@ ROOTFS_DIR="$DEVICE_TMP/mirakurun-root"
 WORK_DIR=$(mktemp -d)
 trap "rm -rf '$WORK_DIR'" EXIT
 
-# Alpine 3.22 系は nodejs 22.x (LTS) を提供する (3.20 は 20.x で 2026-04 に EOL)。
-ALPINE_VERSION=3.22
-ALPINE_PATCH=3.22.5
+# Alpine 3.23 系は nodejs 24.x (LTS) を提供する。
+ALPINE_VERSION=3.23
+ALPINE_PATCH=3.23.5
 ALPINE_ARCH=armhf
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/${ALPINE_ARCH}/alpine-minirootfs-${ALPINE_PATCH}-${ALPINE_ARCH}.tar.gz"
 
