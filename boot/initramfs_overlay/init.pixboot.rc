@@ -26,6 +26,8 @@ on post-fs-data
     chmod 0755 /data/local/tmp/stop_android_tv.sh
     copy /smb400_tuner.sh    /data/local/tmp/smb400-tuner.sh
     chmod 0755 /data/local/tmp/smb400-tuner.sh
+    copy /mdns_responder.js  /data/local/tmp/mdns_responder.js
+    chmod 0755 /data/local/tmp/mdns_responder.js
     # Ensure /run and /var/run exist in Alpine rootfs so Node.js can bind the socket
     mkdir /data/local/tmp/mirakurun-root/run 0755 root root
     mkdir /data/local/tmp/mirakurun-root/var/run 0755 root root

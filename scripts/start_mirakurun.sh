@@ -20,6 +20,7 @@ $MIRAKURUN/config/tuners.yml
 $MIRAKURUN/config/channels.yml
 /data/local/tmp/tuner-stream-bs-ng
 /data/local/tmp/b61dec
+/data/local/tmp/mdns_responder.js
 "
 missing=""
 for f in $REQUIRED; do
@@ -59,6 +60,7 @@ pkill -f "tunertest_oem" 2>/dev/null || true
 pkill -f "tunertest" 2>/dev/null || true
 pkill -f "tuner-stream" 2>/dev/null || true
 pkill -f "b61dec" 2>/dev/null || true
+pkill -f "node.*mdns_responder[.]js" 2>/dev/null || true
 
 # --- Bind-mount host directories into the Alpine rootfs ---
 mkdir -p "$ROOTFS/data/local/tmp" "$ROOTFS/system" "$ROOTFS/vendor"
@@ -113,6 +115,14 @@ else
 fi
 
 echo "[mirakurun] Starting Mirakurun-BS4K via chroot + Alpine ARM32..." >> "$LOG"
+
+# Advertise pix-smb400.local and Mirakurun's HTTP endpoint on the LAN.
+chroot "$ROOTFS" /bin/sh -c '
+    MDNS_HOSTNAME="${MDNS_HOSTNAME:-pix-smb400}" \
+    MDNS_INSTANCE="${MDNS_INSTANCE:-PIX-SMB400 Mirakurun}" \
+    MDNS_PORT="${MDNS_PORT:-40772}" \
+    /usr/bin/node /data/local/tmp/mdns_responder.js >> /data/local/tmp/mdns.log 2>&1 &
+' || echo "[mirakurun] warning: failed to start mDNS responder" >> "$LOG"
 
 # Ensure the mirakurun bind mount is present right before launch.
 if ! test -f "$ROOTFS/data/local/tmp/mirakurun/lib/server.js"; then

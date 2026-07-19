@@ -10,3 +10,8 @@ path: /var/run/mirakurun.sock
 # Use this in LAN or VPN.
 # `~` to disable TCP port listening.
 port: 40772
+
+# hostname: <string>
+# Browser requests include this name in Origin/Referer when accessed via mDNS.
+# Mirakurun rejects unregistered hostnames with HTTP 403.
+hostname: pix-smb400.local

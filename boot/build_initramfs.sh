@@ -69,6 +69,7 @@ cp "$OVERLAY_DIR/start_proxy.sh"     "$WORK_DIR/start_proxy.sh"
 cp "$OVERLAY_DIR/crash_guard.sh"     "$WORK_DIR/crash_guard.sh"
 cp "$OVERLAY_DIR/stop_android_tv.sh" "$WORK_DIR/stop_android_tv.sh"
 cp "$OVERLAY_DIR/smb400_tuner.sh"    "$WORK_DIR/smb400_tuner.sh"
+cp "$SCRIPT_DIR/../scripts/mdns_responder.js" "$WORK_DIR/mdns_responder.js"
 
 # init.rc への import 挿入（冪等）
 if ! grep -q 'import /init.pixboot.rc' "$WORK_DIR/init.rc"; then

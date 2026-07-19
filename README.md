@@ -95,6 +95,7 @@ VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen
 │   ├── start_mirakurun.sh           Mirakurun 起動スクリプト（手動実行用）
 │   ├── stop_android_tv.sh           Android TV 不要プロセス停止
 │   ├── crash_guard.sh               クラッシュ監視ウォッチドッグ
+│   ├── mdns_responder.js            pix-smb400.local / HTTPサービスのmDNS広告
 │   └── setup_proot.sh               Alpine + Node.js 初回セットアップ
 ├── config/
 │   ├── tuners.yml                   Mirakurun チューナー設定
@@ -341,6 +342,15 @@ wc -c /data/local/tmp/.acas_key
 ```sh
 make start ADB_TARGET=<デバイスのIPアドレス>:5555
 ```
+
+起動後はmDNSでも公開されるため、mDNS対応の端末からIPアドレスを指定せずにアクセスできます。
+
+```text
+http://pix-smb400.local:40772/
+```
+
+同時に `PIX-SMB400 Mirakurun._http._tcp.local`（TCP 40772）としてHTTPサービスを広告します。
+Windowsで `.local` が解決できない場合は、Bonjour対応ソフトウェアが有効か確認してください。
 
 正常起動時:
 

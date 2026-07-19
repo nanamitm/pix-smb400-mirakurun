@@ -121,12 +121,14 @@ push-scripts:
 	$(ADB) push scripts/start_mirakurun.sh $(DEVICE_TMP)/start_mirakurun.sh
 	$(ADB) push scripts/stop_android_tv.sh $(DEVICE_TMP)/stop_android_tv.sh
 	$(ADB) push scripts/crash_guard.sh     $(DEVICE_TMP)/crash_guard.sh
+	$(ADB) push scripts/mdns_responder.js  $(DEVICE_TMP)/mdns_responder.js
 	$(ADB) push config/bs_tsid.conf        $(DEVICE_TMP)/bs_tsid.conf
 	$(ADB) shell chmod +x \
 	    $(DEVICE_TMP)/smb400-tuner.sh \
 	    $(DEVICE_TMP)/start_mirakurun.sh \
 	    $(DEVICE_TMP)/stop_android_tv.sh \
-	    $(DEVICE_TMP)/crash_guard.sh
+	    $(DEVICE_TMP)/crash_guard.sh \
+	    $(DEVICE_TMP)/mdns_responder.js
 
 push-config:
 	@echo "[*] Pushing config..."
@@ -186,7 +188,8 @@ start:
 	@echo "[*] Stopping any existing session..."
 	-$(ADB) shell "pkill -9 Mirakurun 2>/dev/null; \
 	    kill -9 \$$(pgrep -f 'start_mirakurun[.]sh' 2>/dev/null) 2>/dev/null; \
-	    pkill -9 b61dec 2>/dev/null; pkill -9 tunertest 2>/dev/null; true"
+	    pkill -9 b61dec 2>/dev/null; pkill -9 tunertest 2>/dev/null; \
+	    pkill -9 -f 'node.*mdns_responder[.]js' 2>/dev/null; true"
 	@sleep 2
 	@echo "[*] Starting Mirakurun..."
 	$(ADB) shell "setsid sh $(DEVICE_TMP)/start_mirakurun.sh \
@@ -210,6 +213,7 @@ stop:
 	    pkill -9 b21dec 2>/dev/null; \
 	    pkill -9 tunertest 2>/dev/null; \
 	    pkill -9 -f tuner-stream 2>/dev/null; \
+	    pkill -9 -f 'node.*mdns_responder[.]js' 2>/dev/null; \
 	    sleep 1; true"
 	-$(ADB) shell " \
 	    grep mirakurun-root /proc/mounts | while read d mp r; do echo \"\$$mp\"; done | sort -r | \
