@@ -1,22 +1,19 @@
 /*
  * b21dec.c — Conventional 2K BS/CS (ISDB-S, ARIB STD-B25 / B-CAS) MPEG-TS
- *            descrambler for PIX-SMB400, using the on-device ACAS chip.
+ *            descrambler for PIX-SMB400, using libyakisoba for ECM decoding.
  *
  * Reads a scrambled MPEG-TS stream from stdin (tuner-stream-bs mode=1 output),
- * parses PSI (PAT/PMT) to locate ECM PIDs, sends each ECM to the ACAS chip
- * (in conventional/B-CAS "ACAS mode", APDU P2=0x02) to obtain MULTI2 scramble
- * keys, descrambles payloads with MULTI2, and writes clean MPEG-TS to stdout.
+ * parses PSI (PAT/PMT) to locate ECM PIDs, decodes each ECM through
+ * libyakisoba (using the configured B-CAS work keys) to obtain MULTI2
+ * scramble keys, descrambles payloads with MULTI2, and writes clean MPEG-TS
+ * to stdout.
  *
  *   tuner-stream-bs 0 1 <IF_kHz> 0 | b21dec
  *
- * Unlike b61dec (BS4K / ARIB STD-B61 / ACAS-RMP / AES-128-CTR), this path uses
- * the chip's *conventional* CAS function:
- *   INIT  90 30 00 02 00 -> system_key=resp[16:48], init_cbc=resp[48:56],
- *                           ca_system_id=be16(resp+6), rc=be16(resp+4)==0x2100
- *   ECM   90 34 00 02 Lc <body> 00 -> Ks=resp[6:22] (odd[0:8]+even[8:16]),
- *                           rc=be16(resp+4) (0x0800=viewable)
- * No master key is required: the chip holds the broadcaster work key (Kw),
- * provisioned via EMM during prior live reception.
+ * Unlike b61dec (BS4K / ARIB STD-B61 / ACAS-RMP / AES-128-CTR), this path
+ * handles conventional ARIB STD-B25 MULTI2. The MULTI2 system key and CBC IV
+ * are fixed B25 parameters; libyakisoba obtains the per-ECM scramble keys from
+ * its configured B-CAS work keys. Configure the latter via BCAS_KEYS_FILE.
  *
  * The MULTI2 core below is an embedded scalar copy of libaribb25's multi2.c
  * (multi2_simd.h pulls x86 intrinsics so the upstream files don't cross-compile
@@ -28,15 +25,8 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <dlfcn.h>
-
-extern int *__errno(void);
-#undef  errno
-#define errno (*__errno())
-extern char *strerror(int errnum);
+#include <yakisoba.h>
 
 /* ===================================================================
  * MULTI2 scalar core  (from libaribb25 multi2.c, scalar path only)
@@ -121,6 +111,17 @@ typedef struct {
     int        have_sys;
     int        have_keys;
 } M2;
+/* ARIB STD-B25 MULTI2 system parameters. */
+static const uint8_t b25_system_key[32] = {
+    0x36, 0x31, 0x04, 0x66, 0x4B, 0x17, 0xEA, 0x5C,
+    0x32, 0xDF, 0x9C, 0xF5, 0xC4, 0xC3, 0x6C, 0x1B,
+    0xEC, 0x99, 0x39, 0x21, 0x68, 0x9D, 0x4B, 0xB7,
+    0xB7, 0x4E, 0x40, 0x84, 0x0D, 0x2E, 0x7D, 0x98,
+};
+static const uint8_t b25_cbc_init[8] = {
+    0xFE, 0x27, 0x19, 0x99, 0x19, 0x69, 0x09, 0x11,
+};
+
 
 static void m2_set_system_key(M2 *m, const uint8_t v[32]) {
     for (int i = 0; i < 8; i++) m->sys.key[i] = ld_be32(v + i * 4);
@@ -163,73 +164,6 @@ static void m2_decrypt(M2 *m, int type, uint8_t *buf, int size) {
 }
 
 /* ===================================================================
- * ACAS chip interface via SCI_WRAPPER (libstationtv_lt_px_stream.so)
- * Conventional / B-CAS command set, ACAS mode (P2 = 0x02).
- * =================================================================== */
-static void *g_lib;
-typedef int (*fn0)(void);
-typedef int (*set_fn)(uint8_t *, int, uint8_t *, int *);
-typedef int (*get_fn)(uint8_t *, int *);
-static fn0    sw_InitAll, sw_ResetF, sw_WaitAct;
-static set_fn sw_SetData;
-static get_fn sw_GetData, sw_GetAtr;
-
-static int sci_load(void) {
-    g_lib = dlopen("/vendor/lib/libstationtv_lt_px_stream.so", RTLD_NOW);
-    if (!g_lib) { fprintf(stderr, "b21dec: dlopen: %s\n", dlerror()); return -1; }
-#define LD(v,s) v = dlsym(g_lib,s); if(!v){fprintf(stderr,"b21dec: dlsym %s: %s\n",s,dlerror());return -1;}
-    LD(sw_InitAll, "SCI_WRAPPER_InitForAllProcess")
-    LD(sw_ResetF,  "SCI_WRAPPER_ResetForced")
-    LD(sw_WaitAct, "SCI_WRAPPER_WaitForActivation")
-    LD(sw_SetData, "SCI_WRAPPER_SetData")
-    LD(sw_GetData, "SCI_WRAPPER_GetData")
-    LD(sw_GetAtr,  "SCI_WRAPPER_GetAtr")
-#undef LD
-    return 0;
-}
-
-static int acas_exchange(const uint8_t *cmd, int clen, uint8_t *resp, int *rlen) {
-    uint8_t dummy[4]; int dl = 0;
-    int r = sw_SetData((uint8_t *)cmd, clen, dummy, &dl);
-    if (r != 0) { fprintf(stderr, "b21dec: SetData err=%d\n", r); return -1; }
-    *rlen = 256;
-    r = sw_GetData(resp, rlen);
-    if (r != 0) { fprintf(stderr, "b21dec: GetData err=%d\n", r); return -1; }
-    return 0;
-}
-
-/* Conventional INIT (INS=0x30, ACAS P2=0x02): fetch system key + CBC IV. */
-static int acas_bcas_init(M2 *m) {
-    static const uint8_t cmd[5] = { 0x90, 0x30, 0x00, 0x02, 0x00 };
-    uint8_t resp[256]; int rlen;
-    if (acas_exchange(cmd, 5, resp, &rlen) < 0) return -1;
-    if (rlen < 57) { fprintf(stderr, "b21dec: INIT short resp (%d)\n", rlen); return -1; }
-    int rc = (resp[4] << 8) | resp[5];
-    int casid = (resp[6] << 8) | resp[7];
-    if (rc != 0x2100) { fprintf(stderr, "b21dec: INIT rc=0x%04x (want 0x2100)\n", rc); return -1; }
-    m2_set_system_key(m, resp + 16);
-    m2_set_init_cbc(m, resp + 48);
-    fprintf(stderr, "b21dec: ACAS conventional init OK (ca_system_id=0x%04x)\n", casid);
-    return 0;
-}
-
-/* ECM request (INS=0x34, ACAS P2=0x02). body = ECM section[8 : len-4].
- * On success fills ks16 (odd[0:8]+even[8:16]) and returns return_code. */
-static int acas_bcas_ecm(const uint8_t *body, int blen, uint8_t ks16[16]) {
-    if (blen < 1 || blen > 251) return -1;
-    uint8_t cmd[5 + 251 + 1];
-    cmd[0] = 0x90; cmd[1] = 0x34; cmd[2] = 0x00; cmd[3] = 0x02; cmd[4] = (uint8_t)blen;
-    memcpy(cmd + 5, body, blen);
-    cmd[5 + blen] = 0x00;
-    uint8_t resp[256]; int rlen;
-    if (acas_exchange(cmd, 6 + blen, resp, &rlen) < 0) return -1;
-    if (rlen < 25) { fprintf(stderr, "b21dec: ECM short resp (%d)\n", rlen); return -1; }
-    int rc = (resp[4] << 8) | resp[5];
-    memcpy(ks16, resp + 6, 16);
-    return rc;
-}
-
-/* ===================================================================
  * MPEG-TS / PSI processing
  * =================================================================== */
 #define TS_PKT 188
@@ -250,7 +184,7 @@ static EcmSlot  g_ecm[MAX_ECM];
 static int16_t  g_pid_ecm[NPID];   /* data PID -> ecm slot index, or -1 */
 static uint8_t  g_is_pmt[NPID];    /* 1 if PID carries a PMT           */
 static uint8_t  g_is_ecm[NPID];    /* 1 if PID carries ECM             */
-static CORE_PARAM g_sys; static CORE_DATA g_cbc; static int g_card_ready;
+static CORE_PARAM g_sys; static CORE_DATA g_cbc;
 
 static long g_stat_pkts, g_stat_scrambled, g_stat_descrambled, g_stat_ecm_calls;
 
@@ -333,7 +267,7 @@ static void parse_pmt(const uint8_t *pkt) {
     }
 }
 
-/* Process an ECM section: send to chip if changed, update slot's work keys. */
+/* Process an ECM section: decode if changed, then update the slot's work keys. */
 static void process_ecm(int slot, const uint8_t *pkt) {
     int seclen; const uint8_t *sec = psi_section(pkt, &seclen);
     if (!sec || (sec[0] != 0x82 && sec[0] != 0x83)) return;
@@ -345,12 +279,11 @@ static void process_ecm(int slot, const uint8_t *pkt) {
     EcmSlot *e = &g_ecm[slot];
     if (e->cache_len == blen && memcmp(e->cache, body, blen) == 0) return; /* dedup */
     uint8_t ks16[16];
-    int rc = acas_bcas_ecm(body, blen, ks16);
+    int rc = bcas_decodeECM(body, (uint32_t)blen, ks16, NULL);
     g_stat_ecm_calls++;
-    if (rc < 0) return;
-    if (rc != 0x0800) {
-        fprintf(stderr, "b21dec: ECM pid=0x%04x rc=0x%04x (not viewable)\n", e->pid, rc);
-        /* keep previous keys; cache to avoid hammering the chip */
+    if (rc != 0) {
+        fprintf(stderr, "b21dec: ECM pid=0x%04x libyakisoba rc=%d\\n", e->pid, rc);
+        /* Keep previous keys and cache the rejected ECM. */
     } else {
         m2_set_scramble_key(&e->m2, ks16);
     }
@@ -421,15 +354,11 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < NPID; i++) g_pid_ecm[i] = -1;
 
-    if (sci_load() < 0) return 1;
-    int r;
-    if ((r = sw_InitAll()) != 0) { fprintf(stderr, "b21dec: InitForAllProcess=%d\n", r); return 1; }
-    if ((r = sw_ResetF())  != 0) { fprintf(stderr, "b21dec: ResetForced=%d\n", r); return 1; }
-    if ((r = sw_WaitAct()) != 0) { fprintf(stderr, "b21dec: WaitForActivation=%d\n", r); return 1; }
-
     M2 cardm = {0}; cardm.round = 4;
-    if (acas_bcas_init(&cardm) < 0) return 1;
-    g_sys = cardm.sys; g_cbc = cardm.cbc_init; g_card_ready = 1;
+    m2_set_system_key(&cardm, b25_system_key);
+    m2_set_init_cbc(&cardm, b25_cbc_init);
+    g_sys = cardm.sys; g_cbc = cardm.cbc_init;
+    fprintf(stderr, "b21dec: libyakisoba ECM decoder enabled; set BCAS_KEYS_FILE\n");
 
     /* Streaming: read TS, resync on 0x47, parse PSI, descramble. */
     uint8_t buf[TS_PKT * 256];

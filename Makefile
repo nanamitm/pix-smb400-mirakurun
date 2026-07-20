@@ -94,7 +94,11 @@ build-bins: android-libs
 	    -o bin/tuner-stream-bs
 	@echo "[*] Building b21dec (従来2K BS MULTI2 descrambler)..."
 	$(CC_ARM) $(CFLAGS_ARM) -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wl,--no-as-needed \
+	    -Ithird_party/libyakisoba-cross/src -DSYSCONF_DIR=\"/etc\" \
 	    src/startup.c src/b21dec.c \
+	    third_party/libyakisoba-cross/src/Crypto.c \
+	    third_party/libyakisoba-cross/src/Decoder-ECM.c \
+	    third_party/libyakisoba-cross/src/Keyset.c \
 	    $(ANDROID_LIBS)/libc.so $(ANDROID_LIBS)/libdl.so $(ANDROID_LIBS)/ld-android.so \
 	    -o bin/b21dec
 	@echo "[+] Built bin/tuner-stream-ng, tuner-stream-bs-ng, b61dec, tuner-stream-bs, b21dec"
