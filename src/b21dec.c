@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <yakisoba.h>
 
 /* ===================================================================
@@ -353,6 +354,11 @@ int main(int argc, char **argv) {
     signal(SIGTERM, on_sig); signal(SIGINT, on_sig); signal(SIGPIPE, on_sig);
 
     for (int i = 0; i < NPID; i++) g_pid_ecm[i] = -1;
+
+    if (setenv("BCAS_KEYS_FILE", "/data/local/tmp/bcas_keys", 1) != 0) {
+        fprintf(stderr, "b21dec: failed to set BCAS_KEYS_FILE\n");
+        return 1;
+    }
 
     M2 cardm = {0}; cardm.round = 4;
     m2_set_system_key(&cardm, b25_system_key);
