@@ -8,6 +8,8 @@ ROOTFS=/data/local/tmp/mirakurun-root
 MIRAKURUN=/data/local/tmp/mirakurun
 LOG=/data/local/tmp/mirakurun.log
 PIDFILE=/data/local/tmp/mirakurun-start.pid
+MDNS_LOG=/data/local/tmp/mdns.log
+MDNS_RESTART_DELAY=5
 
 # --- Preflight: start only if the Mirakurun setup is fully present. ---
 # If anything required is missing we exit immediately WITHOUT stopping
@@ -117,12 +119,24 @@ fi
 echo "[mirakurun] Starting Mirakurun-BS4K via chroot + Alpine ARM32..." >> "$LOG"
 
 # Advertise pix-smb400.local and Mirakurun's HTTP endpoint on the LAN.
-chroot "$ROOTFS" /bin/sh -c '
-    MDNS_HOSTNAME="${MDNS_HOSTNAME:-pix-smb400}" \
-    MDNS_INSTANCE="${MDNS_INSTANCE:-PIX-SMB400 Mirakurun}" \
-    MDNS_PORT="${MDNS_PORT:-40772}" \
-    /usr/bin/node /data/local/tmp/mdns_responder.js >> /data/local/tmp/mdns.log 2>&1 &
-' || echo "[mirakurun] warning: failed to start mDNS responder" >> "$LOG"
+# Keep this independent from Mirakurun: a responder crash must not leave the
+# hostname unreachable until the next full Mirakurun restart.
+start_mdns_supervisor() {
+    while true; do
+        chroot "$ROOTFS" /bin/sh -c '
+            MDNS_HOSTNAME="${MDNS_HOSTNAME:-pix-smb400}" \
+            MDNS_INSTANCE="${MDNS_INSTANCE:-PIX-SMB400 Mirakurun}" \
+            MDNS_PORT="${MDNS_PORT:-40772}" \
+            exec /usr/bin/node /data/local/tmp/mdns_responder.js
+        ' >> "$MDNS_LOG" 2>&1
+        mdns_code=$?
+        echo "[mirakurun] mDNS responder exited (code=$mdns_code); retrying in ${MDNS_RESTART_DELAY}s." >> "$LOG"
+        sleep "$MDNS_RESTART_DELAY"
+    done
+}
+start_mdns_supervisor &
+MDNS_SUPERVISOR_PID=$!
+echo "[mirakurun] mDNS responder supervisor launched (pid=$MDNS_SUPERVISOR_PID)" >> "$LOG"
 
 # Ensure the mirakurun bind mount is present right before launch.
 if ! test -f "$ROOTFS/data/local/tmp/mirakurun/lib/server.js"; then
@@ -152,6 +166,8 @@ chroot "$ROOTFS" /bin/sh -l -c "
 " >> "$LOG" 2>&1
 code=$?
 
+kill "$MDNS_SUPERVISOR_PID" 2>/dev/null || true
+pkill -f "node.*mdns_responder[.]js" 2>/dev/null || true
 rm -f "$PIDFILE" 2>/dev/null || true
 
 if [ -f "$RESTART_TRIGGER" ]; then
