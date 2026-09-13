@@ -312,8 +312,7 @@ static int scan_ca_desc(const uint8_t *d, int len) {
     return -1;
 }
 
-static void parse_pmt(const uint8_t *pkt) {
-    int seclen; const uint8_t *sec = psi_section(pkt, &seclen);
+static void parse_pmt_sec(const uint8_t *sec, int seclen) {
     if (!sec || sec[0] != 0x02) return;
     int total = seclen - 4;          /* exclude CRC; relative to sec+3 */
     int pil = ((sec[10] & 0x0f) << 8) | sec[11];
@@ -331,6 +330,59 @@ static void parse_pmt(const uint8_t *pkt) {
         }
         es += 5 + il;
     }
+}
+
+/* Multi-packet PSI section assembler (for PMT).
+ * NHK-G's PMT is 210 bytes and spans 2 TS packets; the old single-packet
+ * parse silently dropped ES entries in the continuation fragment (e.g. data
+ * PIDs 369/370), leaving them scrambled. Assemble per PID, then parse. */
+#define SEC_MAX 1024
+#define NSECASM 16
+typedef struct { uint16_t pid; uint16_t have; uint16_t total; uint8_t cc; uint8_t active; uint8_t buf[SEC_MAX]; } SecAsm;
+static SecAsm g_secasm[NSECASM];
+
+static void feed_pmt(const uint8_t *pkt) {
+    int pid  = ((pkt[1] & 0x1f) << 8) | pkt[2];
+    int pusi = (pkt[1] >> 6) & 1;
+    int cc   = pkt[3] & 0x0f;
+    int afc  = (pkt[3] >> 4) & 0x3;
+    if (!(afc & 0x1)) return;                       /* no payload (CC not incremented) */
+    int off  = 4;
+    if (afc & 0x2) off = 5 + pkt[4];
+    if (off >= TS_PKT) return;
+    const uint8_t *pay = pkt + off;
+    int paylen = TS_PKT - off;
+
+    SecAsm *a = NULL;
+    for (int i = 0; i < NSECASM; i++)
+        if (g_secasm[i].active && g_secasm[i].pid == pid) { a = &g_secasm[i]; break; }
+    if (pusi) {
+        int ptr = pay[0];
+        if (1 + ptr + 3 > paylen) return;
+        const uint8_t *sec = pay + 1 + ptr;
+        int seclen = ((sec[1] & 0x0f) << 8) | sec[2];
+        int total = 3 + seclen;
+        if (total > SEC_MAX) return;               /* absurd: ignore */
+        if (!a) {
+            for (int i = 0; i < NSECASM; i++)
+                if (!g_secasm[i].active) { a = &g_secasm[i]; break; }
+            if (!a) return;
+            a->pid = (uint16_t)pid; a->active = 1;
+        }
+        int take = total < paylen - 1 - ptr ? total : paylen - 1 - ptr;
+        memcpy(a->buf, sec, take);
+        a->have = (uint16_t)take; a->total = (uint16_t)total; a->cc = (uint8_t)cc;
+        if (a->have >= a->total) { a->active = 0; parse_pmt_sec(a->buf, (int)(a->total - 3)); }
+        return;
+    }
+    if (!a) return;                                 /* no assembly in flight */
+    if (cc == a->cc) return;                        /* duplicate packet: ignore */
+    if (((a->cc + 1) & 0x0f) != cc) { a->active = 0; return; }  /* gap: drop */
+    int need = (int)a->total - (int)a->have;
+    int take = need < paylen ? need : paylen;
+    memcpy(a->buf + a->have, pay, take);
+    a->have += (uint16_t)take; a->cc = (uint8_t)cc;
+    if (a->have >= a->total) { a->active = 0; parse_pmt_sec(a->buf, (int)(a->total - 3)); }
 }
 
 /* Process an ECM section: send to chip if changed, update slot's work keys. */
@@ -464,7 +516,7 @@ int main(int argc, char **argv) {
             int tsc  = (pkt[3] >> 6) & 3;
 
             if (pid == 0x0000 && pusi)            parse_pat(pkt);
-            else if (pid < NPID && g_is_pmt[pid] && pusi) parse_pmt(pkt);
+            else if (pid < NPID && g_is_pmt[pid]) feed_pmt(pkt);  /* PUSI + continuations */
             if (pid < NPID && g_is_ecm[pid] && pusi) {
                 for (int s = 0; s < MAX_ECM; s++)
                     if (g_ecm[s].used && g_ecm[s].pid == pid) { process_ecm(s, pkt); break; }
