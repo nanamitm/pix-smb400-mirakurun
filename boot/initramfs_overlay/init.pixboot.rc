@@ -2,7 +2,7 @@
 # init.pixboot.rc: imported before init.bigfish.rc so PIXBOOT services take precedence
 
 on early-init
-    setprop ro.pixboot.version 19
+    setprop ro.pixboot.version 20
     # Enable TCP ADB on 5555 persistently. adbd reads service.adb.tcp.port when it
     # starts, so this must be set *before* `start adbd`. Baked into the initramfs so
     # it survives every USB boot (no manual `adb tcpip 5555` needed after reboot).
