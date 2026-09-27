@@ -178,6 +178,7 @@ typedef struct {
     int      used;
     uint8_t  cache[256];   /* last ECM body (dedup) */
     int      cache_len;
+    int      tried;        /* an ECM was decoded but rejected (e.g. unpurchased) */
     M2       m2;           /* shares sys/cbc, holds its own work keys */
 } EcmSlot;
 
@@ -185,6 +186,8 @@ static EcmSlot  g_ecm[MAX_ECM];
 static int16_t  g_pid_ecm[NPID];   /* data PID -> ecm slot index, or -1 */
 static uint8_t  g_is_pmt[NPID];    /* 1 if PID carries a PMT           */
 static uint8_t  g_is_ecm[NPID];    /* 1 if PID carries ECM             */
+static uint8_t  g_pmt_seen[NPID];  /* 1 once that PMT has been parsed  */
+static int      g_pat_seen, g_pmt_n, g_pmt_seen_n;
 static CORE_PARAM g_sys; static CORE_DATA g_cbc;
 
 static long g_stat_pkts, g_stat_scrambled, g_stat_descrambled, g_stat_ecm_calls;
@@ -194,7 +197,7 @@ static int find_or_make_ecm_slot(uint16_t pid) {
         if (g_ecm[i].used && g_ecm[i].pid == pid) return i;
     for (int i = 0; i < MAX_ECM; i++)
         if (!g_ecm[i].used) {
-            g_ecm[i].used = 1; g_ecm[i].pid = pid; g_ecm[i].cache_len = 0;
+            g_ecm[i].used = 1; g_ecm[i].pid = pid; g_ecm[i].cache_len = 0; g_ecm[i].tried = 0;
             g_ecm[i].m2 = (M2){0}; g_ecm[i].m2.round = 4;
             g_ecm[i].m2.sys = g_sys; g_ecm[i].m2.cbc_init = g_cbc; g_ecm[i].m2.have_sys = 1;
             g_is_ecm[pid] = 1;
@@ -229,8 +232,9 @@ static void parse_pat(const uint8_t *pkt) {
     for (int i = 0; i + 4 <= blen; i += 4) {
         int prog = (body[i] << 8) | body[i + 1];
         int pmt  = ((body[i + 2] & 0x1f) << 8) | body[i + 3];
-        if (prog != 0 && pmt < NPID) g_is_pmt[pmt] = 1;
+        if (prog != 0 && pmt < NPID && !g_is_pmt[pmt]) { g_is_pmt[pmt] = 1; g_pmt_n++; }
     }
+    g_pat_seen = 1;
 }
 
 /* Returns ECM PID from a CA_descriptor loop, or -1 if none. */
@@ -276,6 +280,12 @@ static void parse_pmt_sec(const uint8_t *sec, int seclen) {
 typedef struct { uint16_t pid; uint16_t have; uint16_t total; uint8_t cc; uint8_t active; uint8_t buf[SEC_MAX]; } SecAsm;
 static SecAsm g_secasm[NSECASM];
 
+static void pmt_complete(int pid, const SecAsm *a) {
+    if (a->buf[0] != 0x02) return;
+    parse_pmt_sec(a->buf, (int)(a->total - 3));
+    if (!g_pmt_seen[pid]) { g_pmt_seen[pid] = 1; g_pmt_seen_n++; }
+}
+
 static void feed_pmt(const uint8_t *pkt) {
     int pid  = ((pkt[1] & 0x1f) << 8) | pkt[2];
     int pusi = (pkt[1] >> 6) & 1;
@@ -307,7 +317,7 @@ static void feed_pmt(const uint8_t *pkt) {
         int take = total < paylen - 1 - ptr ? total : paylen - 1 - ptr;
         memcpy(a->buf, sec, take);
         a->have = (uint16_t)take; a->total = (uint16_t)total; a->cc = (uint8_t)cc;
-        if (a->have >= a->total) { a->active = 0; parse_pmt_sec(a->buf, (int)(a->total - 3)); }
+        if (a->have >= a->total) { a->active = 0; pmt_complete(pid, a); }
         return;
     }
     if (!a) return;                                 /* no assembly in flight */
@@ -317,7 +327,7 @@ static void feed_pmt(const uint8_t *pkt) {
     int take = need < paylen ? need : paylen;
     memcpy(a->buf + a->have, pay, take);
     a->have += (uint16_t)take; a->cc = (uint8_t)cc;
-    if (a->have >= a->total) { a->active = 0; parse_pmt_sec(a->buf, (int)(a->total - 3)); }
+    if (a->have >= a->total) { a->active = 0; pmt_complete(pid, a); }
 }
 
 /* Process an ECM section: decode if changed, then update the slot's work keys. */
@@ -335,8 +345,9 @@ static void process_ecm(int slot, const uint8_t *pkt) {
     int rc = bcas_decodeECM(body, (uint32_t)blen, ks16, NULL);
     g_stat_ecm_calls++;
     if (rc != 0) {
-        fprintf(stderr, "b21dec: ECM pid=0x%04x libyakisoba rc=%d\\n", e->pid, rc);
+        fprintf(stderr, "b21dec: ECM pid=0x%04x libyakisoba rc=%d\n", e->pid, rc);
         /* Keep previous keys and cache the rejected ECM. */
+        e->tried = 1;
     } else {
         m2_set_scramble_key(&e->m2, ks16);
     }
@@ -373,16 +384,22 @@ static void emit_packet(uint8_t *pkt) {
     }
 }
 
-static int any_keys_ready(void) {
+/* Ready to stop holding once every PMT listed in the PAT has been parsed and
+ * every ECM they reference has been answered (keys, or rejected as
+ * unpurchased).  Releasing on the *first* key leaked ~0.15 s of scrambled
+ * packets on multi-ECM transponders (CS ND04: 4 services, 4 ECM PIDs). */
+static int startup_ready(void) {
+    if (!g_pat_seen || g_pmt_seen_n < g_pmt_n) return 0;
     for (int s = 0; s < MAX_ECM; s++)
-        if (g_ecm[s].used && g_ecm[s].m2.have_keys) return 1;
-    return 0;
+        if (g_ecm[s].used && !g_ecm[s].m2.have_keys && !g_ecm[s].tried) return 0;
+    return 1;
 }
 
-/* Startup hold: buffer packets until the first ECM key is acquired, so the
- * stream begins fully descrambled instead of leaking ~0.3s of scrambled data.
- * Capped so FTA / unpurchased channels still start promptly (pass-through). */
-#define MAX_PEND 8192
+/* Startup hold: buffer packets until startup_ready(), so the stream begins
+ * fully descrambled.  FTA channels (no ECM) are released as soon as their
+ * PMTs are parsed.  Capped (~2 s of CS, ~4 s of GR) so a missing ECM or PMT
+ * cannot stall the stream; the remainder then passes through. */
+#define MAX_PEND 32768
 static uint8_t g_pend[MAX_PEND][TS_PKT];
 static int     g_pend_n = 0;
 static int     g_hold = 1;
@@ -459,13 +476,16 @@ int main(int argc, char **argv) {
 
             (void)tsc;
             if (g_hold) {
-                if (any_keys_ready()) {
-                    flush_pending();        /* keys ready: descramble held packets */
+                if (startup_ready()) {
+                    if (verbose) fprintf(stderr, "b21dec: startup hold released after %d pkts\n", g_pend_n);
+                    flush_pending();        /* all keys settled: descramble held packets */
                     emit_packet(pkt);
                 } else if (g_pend_n < MAX_PEND) {
                     memcpy(g_pend[g_pend_n++], pkt, TS_PKT);
                 } else {
-                    flush_pending();        /* cap reached (FTA/unpurchased): give up holding */
+                    fprintf(stderr, "b21dec: startup hold cap reached (pmt %d/%d)\n",
+                            g_pmt_seen_n, g_pmt_n);
+                    flush_pending();        /* cap reached: give up holding */
                     emit_packet(pkt);
                 }
             } else {
