@@ -354,6 +354,137 @@ static void process_ecm(int slot, const uint8_t *pkt) {
     memcpy(e->cache, body, blen); e->cache_len = blen;
 }
 
+/* Scrambled PIDs that no PMT lists (e.g. BS01_0 0x04E0/0x04E1, BS13_0 0x0248)
+ * have no ECM mapping.  Trial-decrypt them with each keyed ECM slot and adopt
+ * the slot that yields verifiable content.  Only strong evidence counts, so a
+ * genuinely undecryptable PID is never turned into "clear" garbage:
+ *   - a PSI section (collected over as many packets as it spans) whose CRC32
+ *     checks out maps at once;
+ *   - a PES header must be seen twice in a row with the same slot. */
+static int8_t  g_probe_slot[NPID];
+static uint8_t g_probe_score[NPID];
+
+#define PROBE_ASM   4
+#define PROBE_PKTS  26    /* a 4096-byte section + pointer + next PUSI packet */
+typedef struct {
+    int      active, pid, n, len;
+    uint8_t  cc, tsc[PROBE_PKTS], plen[PROBE_PKTS], pusi[PROBE_PKTS];
+    uint8_t  raw[PROBE_PKTS * (TS_PKT - 4)];
+} ProbeAsm;
+static ProbeAsm g_pa[PROBE_ASM];
+
+static uint32_t crc32_mpeg(const uint8_t *p, int n) {
+    uint32_t c = 0xffffffffu;
+    while (n--) {
+        c ^= (uint32_t)*p++ << 24;
+        for (int k = 0; k < 8; k++) c = (c & 0x80000000u) ? (c << 1) ^ 0x04c11db7u : c << 1;
+    }
+    return c;
+}
+
+/* Decrypt the collected payloads with each keyed slot and look for a section
+ * starting at the pointer field whose CRC verifies.  Returns the slot, -1 if
+ * more data is needed, or -2 if no slot gives a plausible section header. */
+static int probe_eval(const ProbeAsm *a) {
+    int plausible = 0;
+    for (int s = 0; s < MAX_ECM; s++) {
+        if (!g_ecm[s].used || !g_ecm[s].m2.have_keys) continue;
+        uint8_t lin[sizeof a->raw];
+        int pos = 0, rpos = 0;
+        for (int k = 0; k < a->n; k++) {
+            uint8_t *d = lin + pos;
+            memcpy(d, a->raw + rpos, a->plen[k]);
+            m2_decrypt(&g_ecm[s].m2, a->tsc[k], d, a->plen[k]);
+            rpos += a->plen[k];
+            if (k > 0 && a->pusi[k]) {      /* next section's packet: drop its pointer_field */
+                memmove(d, d + 1, a->plen[k] - 1);
+                pos += a->plen[k] - 1;
+            } else {
+                pos += a->plen[k];
+            }
+        }
+        int ptr = lin[0];
+        if (1 + ptr + 3 > pos) continue;
+        const uint8_t *sec = lin + 1 + ptr;
+        int total = 3 + (((sec[1] & 0x0f) << 8) | sec[2]);
+        if (sec[0] == 0xff || !(sec[1] & 0x80) || total < 8 || 1 + ptr + total > (int)sizeof lin)
+            continue;
+        plausible = 1;
+        if (1 + ptr + total <= pos && crc32_mpeg(sec, total) == 0) return s;
+    }
+    return plausible ? -1 : -2;
+}
+
+static int probe_map(int pid, int slot) {
+    g_pid_ecm[pid] = (int16_t)slot;
+    fprintf(stderr, "b21dec: PID 0x%04x is in no PMT; descrambling with ECM 0x%04x\n",
+            pid, g_ecm[slot].pid);
+    return slot;
+}
+
+static void probe_append(ProbeAsm *a, const uint8_t *pkt, int off, int len, int pusi) {
+    memcpy(a->raw + a->len, pkt + off, len);
+    a->tsc[a->n] = (uint8_t)((pkt[3] >> 6) & 3); a->plen[a->n] = (uint8_t)len;
+    a->pusi[a->n] = (uint8_t)pusi;
+    a->n++; a->len += len; a->cc = (uint8_t)(pkt[3] & 0x0f);
+}
+
+static int probe_unmapped(int pid, const uint8_t *pkt) {
+    int pusi = (pkt[1] >> 6) & 1, cc = pkt[3] & 0x0f;
+    int afc = (pkt[3] >> 4) & 3;
+    if (!(afc & 1)) return -1;
+    int off = (afc & 2) ? 5 + pkt[4] : 4;
+    if (off >= TS_PKT) return -1;
+    int tsc = (pkt[3] >> 6) & 3, len = TS_PKT - off;
+
+    ProbeAsm *a = NULL;
+    for (int i = 0; i < PROBE_ASM; i++)
+        if (g_pa[i].active && g_pa[i].pid == pid) { a = &g_pa[i]; break; }
+
+    if (pusi) {
+        /* PES header check on the first packet. */
+        int found = -1;
+        for (int s = 0; s < MAX_ECM && found < 0; s++) {
+            if (!g_ecm[s].used || !g_ecm[s].m2.have_keys) continue;
+            uint8_t buf[TS_PKT];
+            memcpy(buf, pkt + off, len);
+            m2_decrypt(&g_ecm[s].m2, tsc, buf, len);
+            if (len >= 4 && buf[0] == 0 && buf[1] == 0 && buf[2] == 1 && buf[3] >= 0xbc) found = s;
+        }
+        if (found >= 0) {
+            if (g_probe_slot[pid] != found) { g_probe_slot[pid] = (int8_t)found; g_probe_score[pid] = 0; }
+            if (++g_probe_score[pid] >= 2) {
+                if (a) a->active = 0;
+                return probe_map(pid, found);
+            }
+            return -1;
+        }
+        g_probe_score[pid] = 0;
+        /* The previous section may end in this packet, before the pointer. */
+        if (a && ((a->cc + 1) & 0x0f) == cc && a->n < PROBE_PKTS) {
+            probe_append(a, pkt, off, len, 1);
+            int r = probe_eval(a);
+            if (r >= 0) { a->active = 0; return probe_map(pid, r); }
+        }
+        /* Start collecting the section that begins here. */
+        if (!a)
+            for (int i = 0; i < PROBE_ASM; i++)
+                if (!g_pa[i].active) { a = &g_pa[i]; break; }
+        if (!a) return -1;
+        a->active = 1; a->pid = pid; a->n = 0; a->len = 0;
+    } else {
+        if (!a) return -1;                          /* no section start seen yet */
+        if (cc == a->cc) return -1;                 /* duplicate packet          */
+        if (((a->cc + 1) & 0x0f) != cc || a->n >= PROBE_PKTS) { a->active = 0; return -1; }
+    }
+    probe_append(a, pkt, off, len, pusi);
+
+    int r = probe_eval(a);
+    if (r == -1) return -1;
+    a->active = 0;
+    return r >= 0 ? probe_map(pid, r) : -1;
+}
+
 static volatile int g_running = 1;
 static void on_sig(int s) { (void)s; g_running = 0; }
 
@@ -364,6 +495,7 @@ static void emit_packet(uint8_t *pkt) {
     if (tsc >= 2) {
         g_stat_scrambled++;
         int slot = (pid < NPID) ? g_pid_ecm[pid] : -1;
+        if (slot < 0 && pid < NPID) slot = probe_unmapped(pid, pkt);
         if (slot >= 0 && g_ecm[slot].m2.have_keys) {
             int afc = (pkt[3] >> 4) & 3;
             int off = 4;
@@ -405,6 +537,16 @@ static int     g_pend_n = 0;
 static int     g_hold = 1;
 
 static void flush_pending(void) {
+    /* Resolve PMT-less scrambled PIDs from the whole held window first, so
+     * their packets are descrambled from the start instead of leaking until
+     * the probe completes.  Then reset the probes for the emit pass. */
+    for (int i = 0; i < g_pend_n; i++) {
+        const uint8_t *p = g_pend[i];
+        int pid = ((p[1] & 0x1f) << 8) | p[2];
+        if ((p[3] >> 6) >= 2 && g_pid_ecm[pid] < 0) probe_unmapped(pid, p);
+    }
+    memset(g_pa, 0, sizeof g_pa);
+    memset(g_probe_score, 0, sizeof g_probe_score);
     for (int i = 0; i < g_pend_n && g_running; i++) emit_packet(g_pend[i]);
     g_pend_n = 0;
     g_hold = 0;
