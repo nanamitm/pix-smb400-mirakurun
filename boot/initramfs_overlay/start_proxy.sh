@@ -37,13 +37,20 @@ if [ ! -s /data/local/tmp/.acas_key ]; then
     echo "[mirakurun] warning: /data/local/tmp/.acas_key missing — streams will be scrambled." >> "$LOG"
 fi
 
+# running_as <pidfile> <regex>: true only if the PID in <pidfile> is alive AND
+# its command line matches <regex>. PIDs are reused after a reboot, so a stale
+# pidfile can name an unrelated process (seen: crash_guard.pid pointing at an
+# Android app), and a bare `kill -0` would then skip starting the real thing.
+running_as() {
+    rp=$(cat "$1" 2>/dev/null)
+    [ -n "$rp" ] && kill -0 "$rp" 2>/dev/null &&
+        tr '\000' ' ' < "/proc/$rp/cmdline" 2>/dev/null | grep -qE "$2"
+}
+
 # Singleton: if another instance is already running, exit immediately.
-if [ -f "$PIDFILE" ]; then
-    existing=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
-        echo "[mirakurun] already running (pid=$existing), exiting." >> "$LOG"
-        exit 0
-    fi
+if running_as "$PIDFILE" 'start_(proxy|mirakurun)[.]sh'; then
+    echo "[mirakurun] already running (pid=$(cat "$PIDFILE")), exiting." >> "$LOG"
+    exit 0
 fi
 echo $$ > "$PIDFILE"
 
@@ -101,14 +108,8 @@ mkdir -p "$MIRAKURUN/db" "$MIRAKURUN/logo-data" "$MIRAKURUN/config"
 # Only start it if not already running.
 GUARD=/data/local/tmp/crash_guard.sh
 GUARD_PID=/data/local/tmp/crash_guard.pid
-guard_running=0
-if [ -f "$GUARD_PID" ]; then
-    gp=$(cat "$GUARD_PID" 2>/dev/null)
-    if [ -n "$gp" ] && kill -0 "$gp" 2>/dev/null; then
-        guard_running=1
-    fi
-fi
-if [ "$guard_running" = 0 ]; then
+gp=$(cat "$GUARD_PID" 2>/dev/null)
+if ! running_as "$GUARD_PID" 'crash_guard[.]sh'; then
     setsid sh "$GUARD" >> /data/local/tmp/crash_guard.log 2>&1 &
     echo "[mirakurun] crash_guard watchdog launched (pid=$!)" >> "$LOG"
 else
