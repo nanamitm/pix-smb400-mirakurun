@@ -100,7 +100,9 @@ build-bins: android-libs
 	    -std=gnu89 -D_GNU_SOURCE -Ithird_party/libyakisoba-cross/src \
 	    -DSYSCONF_DIR=\"/etc\" -c third_party/libyakisoba-cross/src/Keyset.c \
 	    -o bin/.b21dec-Keyset.o
-	$(CC_ARM) $(CFLAGS_ARM) -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wl,--no-as-needed \
+	# -mfpu=neon: MULTI2 decrypts 4 blocks at a time with NEON (the SMB400's
+	# Cortex-A53 cores have it); overrides -mfpu=vfpv3 from CFLAGS_ARM.
+	$(CC_ARM) $(CFLAGS_ARM) -mfpu=neon -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wl,--no-as-needed \
 	    -Ithird_party/libyakisoba-cross/src -DSYSCONF_DIR=\"/etc\" \
 	    src/startup.c src/b21dec.c \
 	    third_party/libyakisoba-cross/src/Crypto.c \

@@ -29,6 +29,9 @@
 #include <stdlib.h>
 #include <poll.h>
 #include <yakisoba.h>
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 /* ===================================================================
  * MULTI2 scalar core  (from libaribb25 multi2.c, scalar path only)
@@ -132,8 +135,6 @@ static void m2_set_scramble_key(M2 *m, const uint8_t ks16[16]) {
     core_schedule(&m->wrk[1], &m->sys, &scr1);
     m->have_keys = 1;
 }
-/* In-place MULTI2 decrypt of a TS payload. type = transport_scrambling_control
- * (0x02 = even key, 0x03 = odd key). Mirrors libaribb25 decrypt_multi2. */
 static inline uint32_t m2_pi3(uint32_t l, uint32_t a, uint32_t b) {
     uint32_t t0 = l + a;
     uint32_t t1 = rol32(t0, 2) + t0 + 1;
@@ -142,6 +143,60 @@ static inline uint32_t m2_pi3(uint32_t l, uint32_t a, uint32_t b) {
     uint32_t t4 = rol32(t3, 1) - t3;
     return rol32(t4, 16) ^ (t4 | l);
 }
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+/* NEON path: CBC decryption of each block depends only on its own and the
+ * previous ciphertext, so four blocks (32 bytes) are decrypted in parallel,
+ * one per 32-bit lane.  vld2/vst2 split the blocks into their l and r words;
+ * vrev32 converts them from big-endian. */
+#define M2V_ROL(x, n) vsriq_n_u32(vshlq_n_u32((x), (n)), (x), 32 - (n))
+#define M2V_ROL16(x)  vreinterpretq_u32_u16(vrev32q_u16(vreinterpretq_u16_u32(x)))
+#define M2V_BSWAP(x)  vreinterpretq_u32_u8(vrev32q_u8(vreinterpretq_u8_u32(x)))
+
+static inline uint32x4_t m2v_pi3(uint32x4_t l, uint32x4_t a, uint32x4_t b, uint32x4_t one) {
+    uint32x4_t t0 = vaddq_u32(l, a);
+    uint32x4_t t1 = vaddq_u32(vaddq_u32(M2V_ROL(t0, 2), t0), one);
+    uint32x4_t t2 = veorq_u32(M2V_ROL(t1, 8), t1);
+    uint32x4_t t3 = vaddq_u32(t2, b);
+    uint32x4_t t4 = vsubq_u32(M2V_ROL(t3, 1), t3);
+    return veorq_u32(M2V_ROL16(t4), vorrq_u32(t4, l));
+}
+
+/* Decrypt the 4 blocks at p in place.  *cl/*cr hold the ciphertext block
+ * preceding p and are advanced to the last ciphertext block of this group. */
+static inline void m2v_decrypt4(uint8_t *p, const uint32x4_t k[8], int round,
+                                uint32_t *cl, uint32_t *cr) {
+    const uint32x4_t one = vdupq_n_u32(1);
+    uint32x4x2_t c = vld2q_u32((const uint32_t *)p);
+    uint32x4_t sl = M2V_BSWAP(c.val[0]), sr = M2V_BSWAP(c.val[1]);
+    uint32x4_t l = sl, r = sr, t0, t1;
+    for (int i = 0; i < round; i++) {
+        t0 = vaddq_u32(r, k[7]);                                              /* pi4 */
+        l = veorq_u32(l, vaddq_u32(vaddq_u32(M2V_ROL(t0, 2), t0), one));
+        r = veorq_u32(r, m2v_pi3(l, k[5], k[6], one));                        /* pi3 */
+        t0 = vaddq_u32(r, k[4]);                                              /* pi2 */
+        t1 = vsubq_u32(vaddq_u32(M2V_ROL(t0, 1), t0), one);
+        l = veorq_u32(l, veorq_u32(M2V_ROL(t1, 4), t1));
+        r = veorq_u32(r, l);                                                  /* pi1 */
+        t0 = vaddq_u32(r, k[3]);
+        l = veorq_u32(l, vaddq_u32(vaddq_u32(M2V_ROL(t0, 2), t0), one));
+        r = veorq_u32(r, m2v_pi3(l, k[1], k[2], one));
+        t0 = vaddq_u32(r, k[0]);
+        t1 = vsubq_u32(vaddq_u32(M2V_ROL(t0, 1), t0), one);
+        l = veorq_u32(l, veorq_u32(M2V_ROL(t1, 4), t1));
+        r = veorq_u32(r, l);
+    }
+    /* CBC: block i is XORed with ciphertext i-1 -> lanes [prev, s0, s1, s2]. */
+    l = veorq_u32(l, vextq_u32(vdupq_n_u32(*cl), sl, 3));
+    r = veorq_u32(r, vextq_u32(vdupq_n_u32(*cr), sr, 3));
+    *cl = vgetq_lane_u32(sl, 3); *cr = vgetq_lane_u32(sr, 3);
+    c.val[0] = M2V_BSWAP(l); c.val[1] = M2V_BSWAP(r);
+    vst2q_u32((uint32_t *)p, c);
+}
+#endif
+
+/* In-place MULTI2 decrypt of a TS payload. type = transport_scrambling_control
+ * (0x02 = even key, 0x03 = odd key). Mirrors libaribb25 decrypt_multi2. */
 static void m2_decrypt(M2 *m, int type, uint8_t *buf, int size) {
     CORE_DATA dst, cbc;
     CORE_PARAM *prm = (type == 0x02) ? &m->wrk[1] : &m->wrk[0];
@@ -154,6 +209,16 @@ static void m2_decrypt(M2 *m, int type, uint8_t *buf, int size) {
     const int round = m->round;
     uint32_t cl = m->cbc_init.l, cr = m->cbc_init.r;
     uint8_t *p = buf;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    if (size >= 32) {
+        const uint32x4_t kv[8] = {
+            vdupq_n_u32(k0), vdupq_n_u32(k1), vdupq_n_u32(k2), vdupq_n_u32(k3),
+            vdupq_n_u32(k4), vdupq_n_u32(k5), vdupq_n_u32(k6), vdupq_n_u32(k7),
+        };
+        for (; size >= 32; p += 32, size -= 32) m2v_decrypt4(p, kv, round, &cl, &cr);
+    }
+#endif
+    /* Remaining blocks (and all of them without NEON). */
     while (size >= 8) {
         uint32_t sl = ld_be32(p), sr = ld_be32(p + 4);
         uint32_t l = sl, r = sr, t0, t1;
