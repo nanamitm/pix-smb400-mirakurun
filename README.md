@@ -559,7 +559,8 @@ make stop     # 停止（チューナー・デスクランブラーも含む）
 make restart  # 再起動
 make log      # ログ確認（最新 50 行）
 make test     # BS4K 疎通テスト
-make push-all # バイナリ・スクリプト・設定を更新
+make test-cs  # CS ND02 疎通テスト（契約依存）
+make push-all # バイナリ・スクリプト・設定を更新（未ビルドのバイナリがあれば中断）
 
 # デバイスの IP アドレスを指定する場合
 make start ADB_TARGET=192.168.1.100:5555
@@ -624,3 +625,27 @@ BS4K/BS/CS を受信した後に地デジ（GR）へ切り替えると、無信�
 # 旧版から更新する場合: 残っている state ファイルを削除（新バイナリでは再作成されません）
 adb -s <デバイスのIPアドレス>:5555 shell "rm -f /data/local/tmp/.tuner_state"
 ```
+
+### Alpine の /bin/sh や /bin/busybox が壊れた（アーキテクチャが違うと言われた）
+
+> **先に確認**: `ls /data/local/tmp/mirakurun-root/bin/sh` で `No such file or directory` が出ても、**機能上の異常ではありません**。Alpine の `/bin/sh` は絶対リンク `-> /bin/busybox` で、chroot 外（Android 名前空間）から見ると `/bin/busybox` が存在しないためリンク切れに見えるだけです。chroot 内では正しく解決します（`ls -l` でリンク先を確認できます）。`make setup-runtime` は Step 2.5 で相対リンク `-> busybox` に張り直すため、実行後はこの表示自体が出なくなります。
+
+`chroot: /bin/sh: No such file or directory` が出る、あるいは `ls` では存在するのに chroot 内で何も実行できない場合は、`mirakurun-root` の展開が不完全か、`bin/busybox` が armhf 以外（aarch64 など）になっています。
+
+```sh
+adb -s <デバイスのIPアドレス>:5555 shell \
+  "ls -la /data/local/tmp/mirakurun-root/bin/sh /data/local/tmp/mirakurun-root/bin/busybox; \
+   od -An -tx1 -N20 /data/local/tmp/mirakurun-root/bin/busybox"
+# → bin/sh -> busybox（相対）または -> /bin/busybox で、busybox の先頭が
+#    7f 45 4c 46 01 01 (ELF32 LE)、末尾 2 バイトが 28 00 (ARM) なら正常
+```
+
+`make setup-runtime` は毎回この検証を行い、壊れていれば Alpine minirootfs から `bin/busybox` を再配置し、`bin/sh -> busybox`（相対リンク）を張り直します。既存の環境でも再実行すれば修復されます。**busybox を手動でダウンロードして差し替える必要はありません**（armhf 版 Alpine minirootfs の busybox がそのまま正解です）。
+
+- rootfs が展開済みでダウンロードを省略した場合も、この検証（Step 2.5）は実行されます。
+- Mirakurun の実行中に再実行しても構いません。`/proc` と `/dev` は未マウントのときだけマウントし、自分でマウントしたものだけを外すため、稼働中のセッションには影響しません。
+- chroot 内で `/bin/sh` が起動できないほど rootfs が壊れている場合は、`make setup-runtime` がエラーで停止します。その場合は作り直してください:
+  ```sh
+  adb -s <デバイスのIPアドレス>:5555 shell "rm -rf /data/local/tmp/mirakurun-root"
+  make setup-runtime ADB_TARGET=<デバイスのIPアドレス>:5555
+  ```
