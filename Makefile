@@ -93,7 +93,9 @@ build-bins: android-libs
 	    $(ANDROID_LIBS)/libc.so $(ANDROID_LIBS)/libdl.so $(ANDROID_LIBS)/ld-android.so \
 	    -o bin/tuner-stream-bs
 	@echo "[*] Building b21dec (従来2K BS MULTI2 descrambler)..."
-	$(CC_ARM) $(CFLAGS_ARM) -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wl,--no-as-needed \
+	# -mfpu=neon: MULTI2 decrypts 4 blocks at a time with NEON (the SMB400's
+	# Cortex-A53 cores have it); overrides -mfpu=vfpv3 from CFLAGS_ARM.
+	$(CC_ARM) $(CFLAGS_ARM) -mfpu=neon -O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Wl,--no-as-needed \
 	    src/startup.c src/b21dec.c \
 	    $(ANDROID_LIBS)/libc.so $(ANDROID_LIBS)/libdl.so $(ANDROID_LIBS)/ld-android.so \
 	    -o bin/b21dec
