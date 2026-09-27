@@ -51,7 +51,7 @@ CFLAGS_ARM   := -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3 \
 .PHONY: build-bins android-libs \
         push-all push-bins push-scripts push-config \
         deploy-mirakurun setup-runtime scan-bs-tsid \
-        start stop restart log test help
+        check-tuner-bins start stop restart log test test-cs help
 
 # ---- ビルド (src/ → bin/) ----
 
@@ -112,7 +112,18 @@ build-bins: android-libs
 
 # ---- デプロイ ----
 
-push-bins:
+# push 前に bin/ のチューナーバイナリがそろっているか確認する。
+check-tuner-bins:
+	@missing=""; for f in bin/tuner-stream-ng bin/tuner-stream-bs-ng bin/b61dec bin/tuner-stream-bs bin/b21dec; do \
+	    [ -f "$$f" ] || missing="$$missing $$f"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+	    echo "[!] チューナーバイナリが未ビルドです:$$missing"; \
+	    echo "    先に 'make build-bins' を実行してください (arm-linux-gnueabi-gcc が必要)。"; \
+	    exit 1; \
+	fi
+
+push-bins: check-tuner-bins
 	@echo "[*] Pushing binaries..."
 	$(ADB) push bin/tuner-stream-ng    $(DEVICE_TMP)/tuner-stream-ng
 	$(ADB) push bin/tuner-stream-bs-ng $(DEVICE_TMP)/tuner-stream-bs-ng
@@ -246,6 +257,13 @@ test:
 	@curl -s --max-time 8 http://$(DEVICE_IP):40772/api/channels/BS4K/45168/stream \
 	    | od -v -t x1 2>/dev/null | head -4
 
+# CS ND02 から 5 秒受信して先頭バイトを表示 (契約・ACAS の視聴可否に依存)
+# 正常: 47 ... (MPEG-TS) で、スクランブル (TS ヘッダ 4 バイト目の上位 2 bit) が 0
+test-cs:
+	@echo "Streaming CS ND02 for 5s..."
+	@curl -s --max-time 8 http://$(DEVICE_IP):40772/api/channels/CS/ND02/stream \
+	    | od -v -t x1 2>/dev/null | head -4
+
 # ---- ヘルプ ----
 
 help:
@@ -265,6 +283,7 @@ help:
 	@echo "  make restart           再起動"
 	@echo "  make log               ログ確認 (tail -50)"
 	@echo "  make test              BS4K ストリーム疎通テスト"
+	@echo "  make test-cs           CS ND02 ストリーム疎通テスト (契約依存)"
 	@echo ""
 	@echo "デフォルト接続先: $(ADB_TARGET)"
 	@echo "変更: make start ADB_TARGET=192.168.1.100:5555"
