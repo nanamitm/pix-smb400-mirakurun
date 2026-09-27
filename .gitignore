@@ -27,11 +27,21 @@ boot/usb_boot_files/initramfs_patched.uimg
 /android-libs/
 
 # ---- User-supplied firmware / kernel image & extraction output ----
+# Local-only firmware helper: contains the Panasonic firmware decryption
+# password. NEVER commit (see also the boot/ flow in BOOT.md).
+get_kernel.sh
+scripts/get_kernel.sh
+# Firmware / kernel image and extraction output (not redistributable)
 kernel.img
+**/kernel.img
 _*.extracted/
+kernel.img.extracted/
 firmware_extracted/
 # kernel.img symlink + kernel.img.extracted/ (derived, ~12M)
 extractions/
+# Extracted initramfs cpio (binwalk output — local-only build input)
+*.cpio
+*.cpio.gz
 
 # ---- scan_bs_tsid.py の候補出力 (差分確認用、コミット不要) ----
 config/bs_tsid.conf.scanned
