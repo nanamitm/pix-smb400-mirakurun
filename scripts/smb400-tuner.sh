@@ -132,9 +132,12 @@ case "$CHANNEL" in
         ;;
     4[0-9][0-9][0-9][0-9])
         # BS4K (ISDB-S3): 5-digit stream ID — static IF frequency lookup
-        ACAS_KEY=$(cat /data/local/tmp/.acas_key 2>/dev/null | tr -d '[:space:]')
-        if [ -z "$ACAS_KEY" ] || [ "${#ACAS_KEY}" -ne 64 ]; then
-            echo "smb400-tuner.sh: ACAS key missing or invalid at /data/local/tmp/.acas_key" >&2
+        # b61dec reads the key from the file itself (-keyfile): a key passed on
+        # the command line would be visible to anyone via ps.
+        ACAS_KEY_FILE=/data/local/tmp/.acas_key
+        ACAS_KEY_LEN=$(tr -d '[:space:]' < "$ACAS_KEY_FILE" 2>/dev/null | wc -c)
+        if [ "${ACAS_KEY_LEN:-0}" -ne 64 ]; then
+            echo "smb400-tuner.sh: ACAS key missing or invalid at $ACAS_KEY_FILE" >&2
             exit 1
         fi
         case "$CHANNEL" in
@@ -147,14 +150,14 @@ case "$CHANNEL" in
         # Pipeline runs in host Android context (chroot to host root) so Android
         # shared libs are accessible.  Run in background so trap fires on SIGTERM.
         chroot /proc/1/root /system/bin/sh -c \
-            "$BINDIR/tuner-stream-bs-ng 0 2 $IF_KHZ $CHANNEL | $BINDIR/b61dec -key $ACAS_KEY" &
+            "$BINDIR/tuner-stream-bs-ng 0 2 $IF_KHZ $CHANNEL | $BINDIR/b61dec -keyfile $ACAS_KEY_FILE" &
         CHROOT_PID=$!
         trap "pkill -f 'tuner-stream-bs-ng 0 2 $IF_KHZ' 2>/dev/null; \
-              pkill -f 'b61dec -key $ACAS_KEY' 2>/dev/null; \
+              pkill -f 'b61dec -keyfile' 2>/dev/null; \
               sleep 1; \
               kill -9 $CHROOT_PID 2>/dev/null; \
               pkill -9 -f 'tuner-stream-bs-ng 0 2 $IF_KHZ' 2>/dev/null; \
-              pkill -9 -f 'b61dec -key $ACAS_KEY' 2>/dev/null; \
+              pkill -9 -f 'b61dec -keyfile' 2>/dev/null; \
               pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
         # tuner-stream-bs-ng spawns tunertest as a child but does not kill it on exit
