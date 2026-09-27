@@ -45,7 +45,7 @@ Part 3: 起動・確認
 |------|------|
 | PIX-SMB400 本体 | USB ブートピンにアクセスできる状態 |
 | USB メモリ | FAT32 フォーマット、1 GB 以上 |
-| ビルド環境 | Docker（ブートファイル用）、`gcc-arm-linux-gnueabi` + `libssl-dev`（バイナリのビルド用） |
+| ビルド環境 | `mkimage`（u-boot-tools）または Docker（ブートファイル用）、`gcc-arm-linux-gnueabi` + `libc6-dev-armel-cross` + `libssl-dev`（バイナリのビルド用） |
 | ACAS マスターキー | 64 文字の hex |
 
 ---
@@ -58,14 +58,15 @@ Part 3: 起動・確認
 VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen in Container」すると、
 [.devcontainer/Dockerfile](.devcontainer/Dockerfile) からビルド環境が構築されます。主な内容:
 
-- `gcc-arm-linux-gnueabi` + `libssl-dev` — `make build-bins`（ARM32 バイナリのクロスコンパイル）
+- `gcc-arm-linux-gnueabi` + `libc6-dev-armel-cross` + `libssl-dev` — `make build-bins`（ARM32 バイナリのクロスコンパイル）
 - `binwalk` + `cpio` — `kernel.img` から initramfs cpio を展開（[Step 0](#step-0-kernelimg-を入手して展開する)）
 - `adb` — デバイスとのバイナリ転送・android-libs 取得
 - `python3-pycryptodome` — `make_usb_boot.py`（`bootargs.bin` / RSA 鍵生成）
+- `u-boot-tools` — `build_initramfs.sh` の `mkimage`（Docker を使わずに uimg をビルド）
 - `nodejs` / `npm` / `git` / `curl` — Mirakurun-BS4K のクローン・ビルド・デプロイ
-- **docker-in-docker** feature — `build_initramfs.sh` / `make_usb_boot.py` がコンテナ内で `docker run` を使うため有効化済み
+- **docker-in-docker** feature — `make_usb_boot.py` の `docker run`、および `mkimage` が無い場合の `build_initramfs.sh` のため有効化済み
 
-> 以降の手順に出てくる `sudo apt install ...`（`gcc-arm-linux-gnueabi`・`libssl-dev`・`binwalk` 等）は、
+> 以降の手順に出てくる `sudo apt install ...`（`gcc-arm-linux-gnueabi`・`libc6-dev-armel-cross`・`libssl-dev`・`binwalk` 等）は、
 > Dev Container を使う場合はインストール済みのためスキップできます。
 > ただし USB メモリのフォーマット・マウント（[Step 1](#step-1-ブートファイルをビルドして-usb-メモリを準備する)）や
 > デバイスへの物理アクセスを伴う操作は、ホスト側で実施してください。
@@ -294,7 +295,7 @@ Mirakurun のコードと設定ファイルがデバイスの `/data/local/tmp/m
 リンクには実機の Android システムライブラリが必要なため、 `make build-bins` が ADB 経由で自動取得します（デバイスが USB ブート中であること）。
 
 ```sh
-# 要件: sudo apt install gcc-arm-linux-gnueabi libssl-dev
+# 要件: sudo apt install gcc-arm-linux-gnueabi libc6-dev-armel-cross libssl-dev
 make build-bins ADB_TARGET=<デバイスのIPアドレス>:5555
 ```
 
