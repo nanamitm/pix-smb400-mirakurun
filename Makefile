@@ -204,15 +204,22 @@ deploy-mirakurun:
 #   - @node-rs/crc32: musl-arm のネイティブビルドが無いため JS 実装に置き換え
 #   - db.js: 番組表 DB の保存を yieldable-json から分割ネイティブ JSON.stringify へ
 #     (15.8MB の programs.json で 18.4s → 1.1s。8K 視聴中のカクつき対策)
+#     Mirakurun-BS4K 075012a 以降は db.ts 自体が対応済みのため、古いビルドにだけ当てる。
+MIRAKURUN_DB_JS := $(MIRAKURUN)/lib/Mirakurun/db.js
 patch-mirakurun:
 	@echo "[*] Applying @node-rs/crc32 JS shim (no musl-arm native build)..."
 	$(ADB) push patches/node-rs-crc32-index.js \
 	    $(MIRAKURUN)/node_modules/@node-rs/crc32/index.js
-	@echo "[*] Patching db.js: chunked native JSON.stringify for DB saves..."
-	$(ADB) push patches/mirakurun-db-stringify.js $(MIRAKURUN)/lib/Mirakurun/db-stringify.js
-	$(ADB) shell "sed -i 's#^const stringifyAsync = (0, util_1.promisify)(yieldableJSON.stringifyAsync);\$$#const stringifyAsync = require(\"./db-stringify\").stringifyChunked;#' $(MIRAKURUN)/lib/Mirakurun/db.js"
-	@$(ADB) shell "grep -q 'db-stringify' $(MIRAKURUN)/lib/Mirakurun/db.js && echo ok" | grep -q ok \
-	    || { echo "[!] db.js のパッチ適用に失敗しました (Mirakurun のバージョンで該当行が変わった可能性)"; exit 1; }
+	@if $(ADB) shell "grep -q 'yieldableJSON.stringifyAsync' $(MIRAKURUN_DB_JS) && echo old" | grep -q old; then \
+	    echo "[*] Patching db.js: chunked native JSON.stringify for DB saves..."; \
+	    $(ADB) push patches/mirakurun-db-stringify.js $(MIRAKURUN)/lib/Mirakurun/db-stringify.js; \
+	    $(ADB) shell "sed -i 's#^const stringifyAsync = (0, util_1.promisify)(yieldableJSON.stringifyAsync);\$$#const stringifyAsync = require(\"./db-stringify\").stringifyChunked;#' $(MIRAKURUN_DB_JS)"; \
+	else \
+	    echo "[=] db.js already serializes DB saves natively (patched, or Mirakurun-BS4K 075012a+)."; \
+	fi
+	@if $(ADB) shell "grep -q 'yieldableJSON.stringifyAsync' $(MIRAKURUN_DB_JS) && echo old" | grep -q old; then \
+	    echo "[!] db.js のパッチ適用に失敗しました (Mirakurun のバージョンで該当行が変わった可能性)"; exit 1; \
+	fi
 	@echo "[+] Mirakurun patches applied (Mirakurun の再起動後に有効)."
 
 # 初回のみ: Alpine ARM32 + Node.js をデバイスに構築（インターネット接続必要）
