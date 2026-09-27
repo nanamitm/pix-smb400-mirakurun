@@ -13,6 +13,9 @@
 #   2. If MemAvailable < MEM_SOFT_KB   -> run stop_android_tv.sh to reclaim
 #      memory from restarted Android TV apps (they drift back over time).
 #   3. If MemAvailable < MEM_FLOOR_KB  -> kill Node as last resort before OOM.
+#   4. Once a minute, trim any log in LOGS larger than LOG_MAX_KB down to its
+#      last LOG_KEEP_KB so /data never fills up (mirakurun.log had grown to
+#      222 MB, 130 MB of it in three days).
 
 POLL=5                 # seconds between checks
 CD_MAX=4               # max tolerated concurrent crash_dump32 processes
@@ -21,6 +24,10 @@ MEM_FLOOR_KB=350000    # kill Node if MemAvailable still below this after reclai
 RECLAIM_COOLDOWN=120   # minimum seconds between stop_android_tv.sh calls
 STOP_ATV=/data/local/tmp/stop_android_tv.sh
 LOG=/data/local/tmp/crash_guard.log
+LOG_MAX_KB=32768       # trim a log once it exceeds this (kB)
+LOG_KEEP_KB=8192       # ... keeping this much of its tail (kB)
+LOG_CHECK_EVERY=12     # polls between log size checks (12 * 5 s = 1 min)
+LOGS="/data/local/tmp/mirakurun.log /data/local/tmp/mirakc.log /data/local/tmp/mdns.log $LOG"
 
 # Ignore SIGTERM so no accidental kill brings down the watchdog.
 trap '' TERM INT
@@ -34,6 +41,22 @@ echo $$ > /data/local/tmp/crash_guard.pid
 echo "[crash_guard] started pid=$$ POLL=${POLL}s CD_MAX=${CD_MAX} MEM_SOFT=${MEM_SOFT_KB}kB MEM_FLOOR=${MEM_FLOOR_KB}kB" >> "$LOG"
 
 last_reclaim=0
+polls=0
+
+# Keep the last LOG_KEEP_KB of $1 in place.  The file is rewritten rather
+# than replaced because the writers hold it open with O_APPEND: after the
+# truncation their next write lands at the new end.
+trim_log() {
+    f=$1
+    [ -f "$f" ] || return 0
+    kb=$(( $(stat -c %s "$f" 2>/dev/null || echo 0) / 1024 ))
+    [ "$kb" -gt "$LOG_MAX_KB" ] || return 0
+    if tail -c $((LOG_KEEP_KB * 1024)) "$f" > "$f.trim" 2>/dev/null; then
+        cat "$f.trim" > "$f"
+        echo "[crash_guard] trimmed $f: ${kb}kB -> ${LOG_KEEP_KB}kB" >> "$LOG"
+    fi
+    rm -f "$f.trim"
+}
 
 while true; do
     # --- 1. crash_dump32 fork-bomb detection ---
@@ -67,6 +90,13 @@ while true; do
         pkill -9 -f "Mirakurun:" 2>/dev/null
         pkill -9 node 2>/dev/null
         pkill -9 crash_dump32 2>/dev/null
+    fi
+
+    # --- 4. bounded log files ---
+    polls=$((polls + 1))
+    if [ "$polls" -ge "$LOG_CHECK_EVERY" ]; then
+        polls=0
+        for f in $LOGS; do trim_log "$f"; done
     fi
 
     sleep "$POLL"
