@@ -6,12 +6,14 @@
  * and writes descrambled TLV to stdout.
  *
  * Usage:
- *   tuner-stream-bs-ng 0 2 <freq_kHz> 0 | b61dec -key <64-hex-chars>
+ *   tuner-stream-bs-ng 0 2 <freq_kHz> 0 | b61dec -keyfile /data/local/tmp/.acas_key
  *
  * For 11.78502 GHz (IF = 11785020 - 10678000 = 1107020 kHz):
- *   tuner-stream-bs-ng 0 2 1107020 0 | b61dec -key <master_key_hex>
+ *   tuner-stream-bs-ng 0 2 1107020 0 | b61dec -keyfile /data/local/tmp/.acas_key
  *
- *   -key  <hex>   32-byte ACAS card master key (64 hex chars, device-specific)
+ *   -keyfile <path>  file holding the 32-byte ACAS card master key (64 hex chars,
+ *                    device-specific); whitespace is ignored
+ *   -key  <hex>   the key on the command line instead (shown by ps; avoid)
  *   -port <n>     SCI port number (default: 0)
  *   -noauth       Skip A0 hash verification (for debugging; decryption may fail)
  *
@@ -526,15 +528,16 @@ static void print_stats(void) {
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s -key <64-hex-chars> [-noauth] [-v]\n\n"
-        "  -key <hex>  32-byte ACAS master key (64 hex chars)\n"
-        "  -noauth     Skip A0 hash verification (debug)\n"
-        "  -v          Verbose: print per-packet scramble detection info\n\n"
+        "Usage: %s -keyfile <path> | -key <64-hex-chars> [-noauth] [-v]\n\n"
+        "  -keyfile <path>  read the 32-byte ACAS master key (64 hex chars) from a file\n"
+        "  -key <hex>       same, given on the command line (visible in ps; avoid)\n"
+        "  -noauth          Skip A0 hash verification (debug)\n"
+        "  -v               Verbose: print per-packet scramble detection info\n\n"
         "Reads TLV/MMTP from stdin, writes descrambled TLV to stdout.\n\n"
         "Example (11.84256 GHz = IF 1164560 kHz, BS7):\n"
         "  stop pix_airtuner\n"
         "  tuner-stream-bs-ng 0 2 1164560 0 | \\\n"
-        "  %s -key <64-hex-acas-master-key>\n\n"
+        "  %s -keyfile /data/local/tmp/.acas_key\n\n"
         "ACAS Master Key:\n"
         "  Extract it from /vendor/lib/libstationtv_lt_px_stream.so on the\n"
         "  device, or read /data/local/tmp/.acas_key (deployed separately).\n"
@@ -552,6 +555,37 @@ static int hex2byte(char c) {
     return -1;
 }
 
+/* Parse a 64-hex-char master key. Returns 0 on success. */
+static int parse_key(const char *hex, uint8_t key[32]) {
+    int j;
+    if ((int)strlen(hex) != 64) return -1;
+    for (j=0; j<32; j++) {
+        int h = hex2byte(hex[j*2]);
+        int l = hex2byte(hex[j*2+1]);
+        if (h<0||l<0) return -1;
+        key[j] = (uint8_t)((h<<4)|l);
+    }
+    return 0;
+}
+
+/* Read the master key from a file (whitespace ignored), so it never
+ * appears on a command line where `ps` would show it. Returns 0 on success. */
+static int read_key_file(const char *path, uint8_t key[32]) {
+    char hex[65];
+    int n = 0, c;
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    while ((c = fgetc(f)) != EOF) {
+        if (c==' '||c=='\t'||c=='\r'||c=='\n') continue;
+        if (n == 64) { n = 65; break; }   /* too long */
+        hex[n++] = (char)c;
+    }
+    fclose(f);
+    if (n != 64) return -1;
+    hex[64] = '\0';
+    return parse_key(hex, key);
+}
+
 int main(int argc, char **argv) {
     uint8_t master_key[32];
     int have_key = 0;
@@ -560,17 +594,16 @@ int main(int argc, char **argv) {
 
     for (i=1; i<argc; i++) {
         if (strcmp(argv[i], "-key")==0 && i+1<argc) {
-            const char *hex = argv[++i];
-            if ((int)strlen(hex) != 64) {
+            if (parse_key(argv[++i], master_key) != 0) {
                 fprintf(stderr, "b61dec: -key must be 64 hex chars\n");
                 return 1;
             }
-            int j;
-            for (j=0; j<32; j++) {
-                int h = hex2byte(hex[j*2]);
-                int l = hex2byte(hex[j*2+1]);
-                if (h<0||l<0) { fprintf(stderr,"b61dec: invalid hex in -key\n"); return 1; }
-                master_key[j] = (uint8_t)((h<<4)|l);
+            have_key = 1;
+        } else if (strcmp(argv[i], "-keyfile")==0 && i+1<argc) {
+            const char *path = argv[++i];
+            if (read_key_file(path, master_key) != 0) {
+                fprintf(stderr, "b61dec: %s must hold a 64-hex-char key\n", path);
+                return 1;
             }
             have_key = 1;
         } else if (strcmp(argv[i], "-noauth")==0) {
@@ -583,7 +616,7 @@ int main(int argc, char **argv) {
     }
 
     if (!have_key) {
-        fprintf(stderr, "b61dec: -key is required\n");
+        fprintf(stderr, "b61dec: -keyfile or -key is required\n");
         usage(argv[0]);
     }
 
