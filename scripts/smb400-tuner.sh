@@ -106,6 +106,13 @@ case "$CHANNEL" in
         # BSと違い1トランスポンダ=単一TSで複数サービスが通常のMPTSとして多重されて
         # いるため、BSのようなTSID対応表は不要。streamId=0(auto)でそのまま受かる。
         NDSTR=${CHANNEL#ND}
+        case "$NDSTR" in
+            02|04|06|08|10|12|14|16|18|20|22|24) ;;
+            *)
+                echo "smb400-tuner.sh: unknown CS channel '$CHANNEL' (expected ND02-ND24 even)" >&2
+                exit 1
+                ;;
+        esac
         ND=$((10#$NDSTR))    # strip leading zero, force base10
         IF_KHZ=$((1613000 + (ND - 2) / 2 * 40000))
         # 2K CS も MULTI2(B-CAS) スクランブルのため、BS(2K)と同じ b21dec 経路で復号。
