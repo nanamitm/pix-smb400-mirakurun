@@ -609,3 +609,17 @@ adb -s <デバイスのIPアドレス>:5555 shell "tail -20 /data/local/tmp/cras
 # メモリ確認
 adb -s <デバイスのIPアドレス>:5555 shell "grep MemAvailable /proc/meminfo"
 ```
+
+### BS4K/BS/CS から地デジへ切り替えると画が出ないことがある
+
+BS4K/BS/CS を受信した後に地デジ（GR）へ切り替えると、無信号や化け TS が流れて画が出ないことがありました。原因は旧 `tuner-stream-ng` の WARM START（前回と同じ周波数ならチューナー初期化を省略する高速化）です。
+
+- `.tuner_state`（GR の前回周波数）を書くのは GR 用の `tuner-stream-ng` だけで、BS/CS/BS4K は別バイナリ（`tuner-stream-bs` / `tuner-stream-bs-ng`）が復調器を使うため更新されません。
+- BS 系を受信した後に GR へ戻ると、state ファイルには古い GR 周波数が残ったまま復調器は BS 系を掴んでおり、WARM START の probe が「別バンドのデータ」を正常と誤判定して化け TS を流していました。
+
+現在の `tuner-stream-ng` は WARM START を廃止し、**常にコールドスタート**（~2-4 秒）します。`/data/local/tmp/.tuner_state` は読み書きしません。
+
+```sh
+# 旧版から更新する場合: 残っている state ファイルを削除（新バイナリでは再作成されません）
+adb -s <デバイスのIPアドレス>:5555 shell "rm -f /data/local/tmp/.tuner_state"
+```

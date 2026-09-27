@@ -1,23 +1,25 @@
 /*
  * tuner-stream-ng: PIX-SMB400 TS streamer using DMX direct capture.
  *
- * Startup strategy (fastest first):
+ * Startup strategy: ALWAYS COLD START (~2-4 s).
  *
- *   WARM START  (~100 ms)
- *     TDA18250B + Hi3130E hold I2C register state across DMX sessions.
- *     If the last stream used the same frequency and used our standard DMX
- *     API, set up DMX directly and probe for live TS data.  No hardware
- *     init needed.
+ *   Fork tunertest_oem writing to a named FIFO.  Monitor the FIFO for a
+ *   TS sync byte (0x47) to detect actual tuner lock — no fixed wait.
+ *   SIGKILL tunertest_oem; GPIO/I2C state is preserved in hardware.
+ *   Then set up DMX and stream.
  *
- *   COLD START  (~2-4 s)
- *     Fork tunertest_oem writing to a named FIFO.  Monitor the FIFO for a
- *     TS sync byte (0x47) to detect actual tuner lock — no fixed wait.
- *     SIGKILL tunertest_oem; GPIO/I2C state is preserved in hardware.
- *     Then set up DMX and stream.
- *
- *     The last initialized frequency is persisted in TUNER_STATE_FILE so
- *     warm start is attempted only when the channel matches (prevents
- *     streaming wrong-channel data on a warm but mis-tuned demod).
+ * WARM START WAS REMOVED (2026-09; 5ch thread avi/1781912513 #589-622).
+ *   The old warm start (~100 ms) assumed the tuner/demod still held the
+ *   state of the last GR stream when .tuner_state matched.  But .tuner_state
+ *   is written only by this GR binary: BS/CS/BS4K streams use the separate
+ *   tuner-stream-bs / tuner-stream-bs-ng binaries, which never update it.
+ *   (Reproduced on the device 2026-09-27: CS ND04 -> GR17 streamed only
+ *   ~1.5 MB of garbage in 15 s until .tuner_state was removed.)  After a cross-band
+ *   switch (GR -> BS/CS/BS4K) the demod is retuned while the state file
+ *   still holds the old GR frequency.  A following GR stream with that
+ *   frequency then ran the warm probe, saw "some data" from the wrong band
+ *   and streamed garbage (no picture).  Cold start (~2-4 s) is slower but
+ *   reliable, so warm start is gone for good.
  *
  * Note on why direct I2C cold start isn't used:
  *   The Hi3130E demodulator performs state-dependent calibration reads
@@ -57,10 +59,6 @@ typedef void        *HI_HANDLE;
 #define DMX_ID          0
 #define TS_PORT_ID      32
 #define REC_BUF_SIZE    (1024 * 1024)
-
-/* Warm start: probe DMX for existing lock */
-#define TUNER_STATE_FILE  "/data/local/tmp/.tuner_state"
-#define WARM_PROBE_MS     500   /* max ms to wait for TS data on warm start */
 
 /* Cold start: FIFO-based lock detection */
 #define LOCK_FIFO_PATH    "/data/local/tmp/.tuner_lock_fifo"
@@ -151,24 +149,6 @@ static int load_libraries(void)
     return 0;
 }
 
-/*===== Tuner state (for warm start) =====*/
-
-static void save_tuner_state(int freq_khz)
-{
-    FILE *f = fopen(TUNER_STATE_FILE, "w");
-    if (f) { fprintf(f, "%d\n", freq_khz); fclose(f); }
-}
-
-static int load_tuner_state(void)
-{
-    FILE *f = fopen(TUNER_STATE_FILE, "r");
-    if (!f) return 0;
-    char buf[32] = {0};
-    fgets(buf, sizeof(buf), f);
-    fclose(f);
-    return atoi(buf);
-}
-
 /*===== DMX layer =====*/
 
 static HI_S32 dmx_setup(HI_U32 dmx_id, HI_U32 port_id, HI_HANDLE *phRecChn)
@@ -250,46 +230,6 @@ static void dmx_stream(HI_HANDLE hRecChn, int ts_fd)
     }
 
     fprintf(stderr, "TS capture stopped: %d loops, %d errors\n", nloops, nerrors);
-}
-
-/*===== Warm start =====*/
-
-/*
- * Try to start streaming without tunertest_oem.
- * The TDA18250B and Hi3130E hold their I2C register state across DMX
- * sessions that used our standard HI_UNF_DMX_* API.  If the last stream
- * was on the same frequency and ended via our dmx_deinit(), just re-open
- * the DMX and data flows immediately.
- *
- * NOTE: This does NOT work if the previous session used tunertest_oem's
- * proprietary API (which disables the TSI stream gate on exit).  The state
- * file is only written after a successful cold start (via our DMX session),
- * so warm start is only attempted in the compatible scenario.
- */
-static int try_warm_start(HI_U32 dmx_id, HI_U32 port_id, HI_HANDLE *phRecChn)
-{
-    if (dmx_setup(dmx_id, port_id, phRecChn) != HI_SUCCESS)
-        return 0;
-
-    HI_UNF_DMX_REC_DATA_S data;
-    int elapsed = 0;
-
-    while (elapsed < WARM_PROBE_MS && g_running) {
-        memset(&data, 0, sizeof(data));
-        HI_S32 ret = g_DMX_AcquireRecData(*phRecChn, &data, 500);
-        if (ret == HI_SUCCESS && data.u32Len > 0 && data.pDataAddr) {
-            g_DMX_ReleaseRecData(*phRecChn, &data);
-            fprintf(stderr, "Warm start: live TS at +%dms\n", elapsed);
-            return 1;
-        }
-        elapsed += 500;
-    }
-
-    fprintf(stderr, "Warm start: no TS in %dms, falling back to cold init\n",
-            WARM_PROBE_MS);
-    dmx_deinit(*phRecChn, dmx_id);
-    *phRecChn = NULL;
-    return 0;
 }
 
 /*===== Cold start: tunertest_oem with FIFO lock detection =====*/
@@ -406,66 +346,53 @@ int main(int argc, char **argv)
     if (load_libraries() != 0) return 1;
 
     HI_HANDLE hRecChn = NULL;
-    int warmed = 0;
-
-    /* ------------------------------------------------------------------ */
-    /* WARM START: re-use existing tuner lock if channel matches last run  */
-    /* ------------------------------------------------------------------ */
-    if (g_running && load_tuner_state() == freq_khz) {
-        fprintf(stderr, "Warm start: freq=%d kHz matches saved state\n", freq_khz);
-        warmed = try_warm_start((HI_U32)dmx_id, (HI_U32)port_id, &hRecChn);
-    }
 
     /* ------------------------------------------------------------------ */
     /* COLD START: tunertest_oem + FIFO lock detection                    */
+    /* Always cold start: warm start was removed (see header comment).    */
     /* ------------------------------------------------------------------ */
-    if (!warmed) {
-        if (!g_running) {
-            dlclose(g_lib_msp);
-            close(ts_fd);
-            return 0;
-        }
+    if (!g_running) {
+        dlclose(g_lib_msp);
+        close(ts_fd);
+        return 0;
+    }
 
-        fprintf(stderr, "Cold start: launching tunertest_oem for freq=%d kHz\n",
-                freq_khz);
-        g_tuner_pid = start_tunertest_oem(tuner_id, freq_khz);
-        if (g_tuner_pid < 0) {
-            fprintf(stderr, "Failed to start tunertest_oem\n");
-            dlclose(g_lib_msp);
-            close(ts_fd);
-            return 1;
-        }
-        fprintf(stderr, "tunertest_oem pid=%d\n", (int)g_tuner_pid);
+    fprintf(stderr, "Cold start: launching tunertest_oem for freq=%d kHz\n",
+            freq_khz);
+    g_tuner_pid = start_tunertest_oem(tuner_id, freq_khz);
+    if (g_tuner_pid < 0) {
+        fprintf(stderr, "Failed to start tunertest_oem\n");
+        dlclose(g_lib_msp);
+        close(ts_fd);
+        return 1;
+    }
+    fprintf(stderr, "tunertest_oem pid=%d\n", (int)g_tuner_pid);
 
-        int lock_ok = wait_for_lock_fifo();
+    int lock_ok = wait_for_lock_fifo();
 
-        if (g_fifo_fd >= 0) { close(g_fifo_fd); g_fifo_fd = -1; }
-        unlink(LOCK_FIFO_PATH);
+    if (g_fifo_fd >= 0) { close(g_fifo_fd); g_fifo_fd = -1; }
+    unlink(LOCK_FIFO_PATH);
 
-        if (!g_running) {
-            if (g_tuner_pid > 0) { kill(g_tuner_pid, SIGKILL); g_tuner_pid = -1; }
-            dlclose(g_lib_msp);
-            close(ts_fd);
-            return 0;
-        }
-        if (!lock_ok)
-            fprintf(stderr, "WARNING: lock timeout after %dms, proceeding anyway\n",
-                    LOCK_TIMEOUT_MS);
+    if (!g_running) {
+        if (g_tuner_pid > 0) { kill(g_tuner_pid, SIGKILL); g_tuner_pid = -1; }
+        dlclose(g_lib_msp);
+        close(ts_fd);
+        return 0;
+    }
+    if (!lock_ok)
+        fprintf(stderr, "WARNING: lock timeout after %dms, proceeding anyway\n",
+                LOCK_TIMEOUT_MS);
 
-        fprintf(stderr, "Killing tunertest_oem pid=%d\n", (int)g_tuner_pid);
-        kill(g_tuner_pid, SIGKILL);
-        g_tuner_pid = -1;
-        usleep(POST_KILL_MS * 1000);
+    fprintf(stderr, "Killing tunertest_oem pid=%d\n", (int)g_tuner_pid);
+    kill(g_tuner_pid, SIGKILL);
+    g_tuner_pid = -1;
+    usleep(POST_KILL_MS * 1000);
 
-        if (dmx_setup((HI_U32)dmx_id, (HI_U32)port_id, &hRecChn) != HI_SUCCESS) {
-            fprintf(stderr, "DMX setup failed\n");
-            dlclose(g_lib_msp);
-            close(ts_fd);
-            return 1;
-        }
-
-        /* Save state: next stream for same channel will use warm start */
-        save_tuner_state(freq_khz);
+    if (dmx_setup((HI_U32)dmx_id, (HI_U32)port_id, &hRecChn) != HI_SUCCESS) {
+        fprintf(stderr, "DMX setup failed\n");
+        dlclose(g_lib_msp);
+        close(ts_fd);
+        return 1;
     }
 
     dmx_stream(hRecChn, ts_fd);
