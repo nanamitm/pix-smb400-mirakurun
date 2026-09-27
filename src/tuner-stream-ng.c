@@ -188,6 +188,8 @@ static void dmx_deinit(HI_HANDLE hRecChn, HI_U32 dmx_id)
     if (g_DMX_DeInit)        g_DMX_DeInit();
 }
 
+static HI_U8 g_copy_buf[256 * 1024];
+
 static void dmx_stream(HI_HANDLE hRecChn, int ts_fd)
 {
     HI_UNF_DMX_REC_DATA_S data;
@@ -214,17 +216,28 @@ static void dmx_stream(HI_HANDLE hRecChn, int ts_fd)
             fprintf(stderr, "LOCKED (first TS: %u bytes)\n", data.u32Len);
             locked = 1;
         }
-        const HI_U8 *p = data.pDataAddr;
-        HI_U32 rem = data.u32Len;
-        while (rem > 0 && g_running) {
-            ssize_t w = write(ts_fd, p, (size_t)rem);
-            if (w < 0) {
-                fprintf(stderr, "write(ts_fd): errno=%d\n", errno);
-                g_running = 0;
-                break;
+        /* Copy the chunk into an ordinary buffer before write().  Letting the
+         * kernel copy straight from the DMX record buffer mapping cost ~17% of
+         * a core in system time on GR (3.7 MB/s in 48 KiB chunks); a user
+         * memcpy plus write() of the copy costs ~4%. */
+        const HI_U8 *src = data.pDataAddr;
+        HI_U32 left = data.u32Len;
+        while (left > 0 && g_running) {
+            HI_U32 n = left < sizeof g_copy_buf ? left : (HI_U32)sizeof g_copy_buf;
+            memcpy(g_copy_buf, src, n);
+            src += n; left -= n;
+            const HI_U8 *p = g_copy_buf;
+            HI_U32 rem = n;
+            while (rem > 0 && g_running) {
+                ssize_t w = write(ts_fd, p, (size_t)rem);
+                if (w < 0) {
+                    fprintf(stderr, "write(ts_fd): errno=%d\n", errno);
+                    g_running = 0;
+                    break;
+                }
+                p   += w;
+                rem -= (HI_U32)w;
             }
-            p   += w;
-            rem -= (HI_U32)w;
         }
         g_DMX_ReleaseRecData(hRecChn, &data);
     }
