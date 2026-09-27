@@ -1,0 +1,4 @@
+# Normalize all text files to LF in the repository and in checkouts.
+# Windows checkouts must not convert shell scripts to CRLF: CRLF scripts
+# fail on Linux/Android with "not found" or busybox syntax errors.
+* text=auto eol=lf
