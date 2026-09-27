@@ -6,8 +6,8 @@
 #
 # Channel format determines operating mode:
 #   GR:   integer 13-62    → tuner-stream-ng  (MPEG-TS, ISDB-T)
-#   BS:   BSxx_y           → tuner-stream-bs  (MPEG-TS, ISDB-S)
-#   CS:   NDxx             → tuner-stream-bs  (MPEG-TS, ISDB-S, 110度CS)
+#   BS:   BSxx_y           → tuner-stream-bs-ng | b21dec (MPEG-TS, ISDB-S)
+#   CS:   NDxx             → tuner-stream-bs-ng | b21dec (MPEG-TS, ISDB-S, 110度CS)
 #   BS4K: integer ≥40000   → tuner-stream-bs-ng | b61dec (descrambled TLV, ISDB-S3)
 #
 # BS4K descrambling note:
@@ -71,7 +71,7 @@ case "$CHANNEL" in
             esac
         fi
         # TSID 未定義 (偶数 TP や TS インデックス超過など) は即終了。
-        # TSID=0 を tuner-stream-bs に渡すと先頭 TS を返すため、
+        # TSID=0 を tuner-stream-bs-ng に渡すと先頭 TS を返すため、
         # 存在しないチャンネルでも別 TP のサービスがヒットしてしまう。
         if [ -z "$TSID" ]; then
             echo "smb400-tuner.sh: unknown BS channel '$CHANNEL' (not in TSID table)" >&2
@@ -82,18 +82,20 @@ case "$CHANNEL" in
         # receives plain MPEG-TS.  b21dec needs the Android linker/vendor libs, so
         # the pipe runs under chroot /proc/1/root (same as the BS4K path).  No key
         # arg: the chip holds the broadcaster work key (Kw) from prior live EMM.
+        # NOTE: 2K BS (mode=1) も tuner-stream-bs-ng (pipe + 64-bit limit) を使用。
+        # 旧 tuner-stream-bs (mkfifo + 2GB limit + 18分毎再起動) は不使用。
         chroot /proc/1/root /system/bin/sh -c \
-            "$BINDIR/tuner-stream-bs 0 1 $IF_KHZ $TSID | $BINDIR/b21dec" &
+            "$BINDIR/tuner-stream-bs-ng 0 1 $IF_KHZ $TSID | $BINDIR/b21dec" &
         CHROOT_PID=$!
-        trap "pkill -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+        trap "pkill -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
               pkill -f b21dec 2>/dev/null; \
               sleep 1; \
               kill -9 $CHROOT_PID 2>/dev/null; \
-              pkill -9 -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+              pkill -9 -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
               pkill -9 -f b21dec 2>/dev/null; \
               pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
-        pkill -9 -f "tuner-stream-bs 0 1 $IF_KHZ" 2>/dev/null || true
+        pkill -9 -f "tuner-stream-bs-ng 0 1 $IF_KHZ" 2>/dev/null || true
         pkill -9 tunertest 2>/dev/null || true
         ;;
     ND[0-9][0-9])
@@ -108,17 +110,17 @@ case "$CHANNEL" in
         IF_KHZ=$((1613000 + (ND - 2) / 2 * 40000))
         # 2K CS も MULTI2(B-CAS) スクランブルのため、BS(2K)と同じ b21dec 経路で復号。
         chroot /proc/1/root /system/bin/sh -c \
-            "$BINDIR/tuner-stream-bs 0 1 $IF_KHZ 0 | $BINDIR/b21dec" &
+            "$BINDIR/tuner-stream-bs-ng 0 1 $IF_KHZ 0 | $BINDIR/b21dec" &
         CHROOT_PID=$!
-        trap "pkill -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+        trap "pkill -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
               pkill -f b21dec 2>/dev/null; \
               sleep 1; \
               kill -9 $CHROOT_PID 2>/dev/null; \
-              pkill -9 -f 'tuner-stream-bs 0 1 $IF_KHZ' 2>/dev/null; \
+              pkill -9 -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
               pkill -9 -f b21dec 2>/dev/null; \
               pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
-        pkill -9 -f "tuner-stream-bs 0 1 $IF_KHZ" 2>/dev/null || true
+        pkill -9 -f "tuner-stream-bs-ng 0 1 $IF_KHZ" 2>/dev/null || true
         pkill -9 tunertest 2>/dev/null || true
         ;;
     4[0-9][0-9][0-9][0-9])

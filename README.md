@@ -106,8 +106,8 @@ VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen
     ├── b61dec.c                     ACAS BS4K / BS8K デスクランブラー（ARIB STD-B61 / AES）
     ├── b21dec.c                     地上波 / BS MULTI2 デスクランブラー（ACAS 経由 / ARIB STD-B25）
     ├── tuner-stream-ng.c            地上波（ISDB-T, MPEG-TS）チューナー
-    ├── tuner-stream-bs-ng.c         BS4K / BS8K（ISDB-S3）チューナー
-    ├── tuner-stream-bs.c            BS（ISDB-S, MPEG-TS）チューナー（mode=1）
+    ├── tuner-stream-bs-ng.c         BS / CS / BS4K / BS8K（ISDB-S/S3）チューナー
+    ├── tuner-stream-bs.c            旧 BS チューナー（mode=1, scan-bs-tsid 用）
     └── startup.c                    Android PIE 用 _start エントリポイント
 ```
 
@@ -306,9 +306,9 @@ make push-all ADB_TARGET=<デバイスのIPアドレス>:5555
 
 以下をデバイスにコピーします:
 - `bin/tuner-stream-ng` — 地上波（ISDB-T）チューナー
-- `bin/tuner-stream-bs-ng` — BS4K / BS8K チューナー
+- `bin/tuner-stream-bs-ng` — BS / CS / BS4K / BS8K チューナー（pipe 方式・サイズ上限なし）
 - `bin/b61dec` — BS4K / BS8K デスクランブラー（ACAS / AES）
-- `bin/tuner-stream-bs` — BS チューナー（mode=1）
+- `bin/tuner-stream-bs` — 旧 BS チューナー（mode=1, `make scan-bs-tsid` 用。受信経路では不使用）
 - `bin/b21dec` — 地上波 / BS デスクランブラー（ACAS 経由 / MULTI2）
 - `scripts/*.sh` — 各種スクリプト
 - `config/*.yml` — Mirakurun 設定
@@ -447,7 +447,7 @@ BS4K の `b61dec`（ACAS-RMP / AES）とは別系統で、ACAS チップの**従
 | NHK BS (102) | BS | BS15_0 | 102 |
 | NHK BS (103) | BS | BS15_0 | 103 |
 
-- channel は `BSxx_y`（xx=トランスポンダ番号, y=ストリーム）形式で、`smb400-tuner.sh` が IF = `1049480 + (xx-1)/2 × 38360` kHz を算出して `tuner-stream-bs`（mode=1）でロックします。
+- channel は `BSxx_y`（xx=トランスポンダ番号, y=ストリーム）形式で、`smb400-tuner.sh` が IF = `1049480 + (xx-1)/2 × 38360` kHz を算出して `tuner-stream-bs-ng`（mode=1）でロックします。旧 `tuner-stream-bs`（mkfifo 方式で 2GB 上限に達すると再起動が必要）は使いません。
 - `b21dec` は **ACAS マスターキー不要**です（放送局のワークキー Kw は、過去の実放送受信時に EMM 経由でチップへ書き込まれた契約情報を利用するため）。
   逆に、当該局の契約・受信履歴が無いチップでは ECM 応答が「視聴不可」となり復号できません。
 - 出力は平文 MPEG-TS なので Mirakurun の標準 TSFilter で処理されます（`tlvDecoder` 不要）。
@@ -498,7 +498,7 @@ BS(2K) と同じ **MULTI2**（B-CAS 方式, CA_system_id 0x0005）でスクラ�
 | ND22 | 2013000 |
 | ND24 | 2053000 |
 
-- channel は `NDxx`（xx=偶数のトランスポンダ番号）形式で、`smb400-tuner.sh` が IF = `1613000 + (xx-2)/2 × 40000` kHz を算出して `tuner-stream-bs`（mode=1, streamId=0=auto）でロックします。
+- channel は `NDxx`（xx=偶数のトランスポンダ番号）形式で、`smb400-tuner.sh` が IF = `1613000 + (xx-2)/2 × 40000` kHz を算出して `tuner-stream-bs-ng`（mode=1, streamId=0=auto）でロックします。
 - BS(2K) と異なり、1トランスポンダ = 単一 TS に複数サービスが通常の MPTS として多重されているため、BS のような TSID 対応表は不要です（`streamId=0` の自動選択でそのまま受かります）。
 - `serviceId` は省略してあり、Mirakurun のサービススキャンが各局を自動登録します。
 - 実機 IF スキャン（2026-07-06）で ND02〜ND24 全12トランスポンダのロック・復号（AXN・BBC・CNNj・Mnet・MusicJapan・LaLaTV・QVC・Dlife・SKY STAGE・TBSチャンネル・日テレNEWS24・GAORA・MONDO TV 等）を確認済みです（[sun-ele.co.jp のCS-IF表](https://sun-ele.co.jp/support/how/bs_freq.html)と一致）。
