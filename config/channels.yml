@@ -206,7 +206,7 @@
 # 解除する（平文 MPEG-TS を Mirakurun 標準 TSFilter で処理）。
 # channel は ND02〜ND24（業界標準のトランスポンダ番号、偶数のみ）。
 # smb400-tuner.sh が IF = 1613000 + (xx-2)/2*40000 kHz を算出して
-# tuner-stream-bs（mode=1, streamId=0=auto）でロックする。
+# tuner-stream-bs-ng（mode=1, streamId=0=auto）でロックする。
 # BS と異なり 1 トランスポンダ = 単一 TS に複数サービスが通常の MPTS として多重されて
 # いるため、BS のような TSID 対応表は不要。serviceId は省略し、Mirakurun のサービス
 # スキャンに自動登録を任せる。

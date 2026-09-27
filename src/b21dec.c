@@ -2,13 +2,13 @@
  * b21dec.c — Conventional 2K BS/CS (ISDB-S, ARIB STD-B25 / B-CAS) MPEG-TS
  *            descrambler for PIX-SMB400, using libyakisoba for ECM decoding.
  *
- * Reads a scrambled MPEG-TS stream from stdin (tuner-stream-bs mode=1 output),
+ * Reads a scrambled MPEG-TS stream from stdin (tuner-stream-bs-ng mode=1 output),
  * parses PSI (PAT/PMT) to locate ECM PIDs, decodes each ECM through
  * libyakisoba (using the configured B-CAS work keys) to obtain MULTI2
  * scramble keys, descrambles payloads with MULTI2, and writes clean MPEG-TS
  * to stdout.
  *
- *   tuner-stream-bs 0 1 <IF_kHz> 0 | b21dec
+ *   tuner-stream-bs-ng 0 1 <IF_kHz> 0 | b21dec
  *
  * Unlike b61dec (BS4K / ARIB STD-B61 / ACAS-RMP / AES-128-CTR), this path
  * handles conventional ARIB STD-B25 MULTI2. The MULTI2 system key and CBC IV
