@@ -50,7 +50,7 @@ CFLAGS_ARM   := -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3 \
 
 .PHONY: build-bins android-libs \
         push-all push-bins push-scripts push-config \
-        deploy-mirakurun setup-runtime scan-bs-tsid \
+        deploy-mirakurun patch-mirakurun setup-runtime scan-bs-tsid \
         check-tuner-bins start stop restart log test test-cs help
 
 # ---- ビルド (src/ → bin/) ----
@@ -183,13 +183,26 @@ deploy-mirakurun:
 	$(ADB) push $(MIRAKURUN_SRC)/node_modules/ $(MIRAKURUN)/node_modules/
 	$(ADB) push $(MIRAKURUN_SRC)/package.json  $(MIRAKURUN)/package.json
 	$(ADB) push $(MIRAKURUN_SRC)/api.yml       $(MIRAKURUN)/api.yml
-	@echo "[*] Applying @node-rs/crc32 JS shim (no musl-arm native build)..."
-	$(ADB) push patches/node-rs-crc32-index.js \
-	    $(MIRAKURUN)/node_modules/@node-rs/crc32/index.js
+	$(MAKE) --no-print-directory patch-mirakurun ADB_TARGET=$(ADB_TARGET)
 	$(ADB) push config/tuners.yml   $(MIRAKURUN)/config/tuners.yml
 	$(ADB) push config/channels.yml $(MIRAKURUN)/config/channels.yml
 	$(ADB) push config/server.yml   $(MIRAKURUN)/config/server.yml
 	@echo "[+] Mirakurun JS deployed."
+
+# デプロイ済み Mirakurun にデバイス向けパッチを当てる（冪等。deploy-mirakurun から呼ばれる）
+#   - @node-rs/crc32: musl-arm のネイティブビルドが無いため JS 実装に置き換え
+#   - db.js: 番組表 DB の保存を yieldable-json から分割ネイティブ JSON.stringify へ
+#     (15.8MB の programs.json で 18.4s → 1.1s。8K 視聴中のカクつき対策)
+patch-mirakurun:
+	@echo "[*] Applying @node-rs/crc32 JS shim (no musl-arm native build)..."
+	$(ADB) push patches/node-rs-crc32-index.js \
+	    $(MIRAKURUN)/node_modules/@node-rs/crc32/index.js
+	@echo "[*] Patching db.js: chunked native JSON.stringify for DB saves..."
+	$(ADB) push patches/mirakurun-db-stringify.js $(MIRAKURUN)/lib/Mirakurun/db-stringify.js
+	$(ADB) shell "sed -i 's#^const stringifyAsync = (0, util_1.promisify)(yieldableJSON.stringifyAsync);\$$#const stringifyAsync = require(\"./db-stringify\").stringifyChunked;#' $(MIRAKURUN)/lib/Mirakurun/db.js"
+	@$(ADB) shell "grep -q 'db-stringify' $(MIRAKURUN)/lib/Mirakurun/db.js && echo ok" | grep -q ok \
+	    || { echo "[!] db.js のパッチ適用に失敗しました (Mirakurun のバージョンで該当行が変わった可能性)"; exit 1; }
+	@echo "[+] Mirakurun patches applied (Mirakurun の再起動後に有効)."
 
 # 初回のみ: Alpine ARM32 + Node.js をデバイスに構築（インターネット接続必要）
 setup-runtime:
@@ -268,6 +281,7 @@ help:
 	@echo "  make push-scripts      スクリプトのみ (smb400-tuner.sh 等)"
 	@echo "  make push-config       設定ファイルのみ (channels.yml 等)"
 	@echo "  make deploy-mirakurun  Mirakurun JS 一式をデプロイ (初回のみ)"
+	@echo "  make patch-mirakurun   デプロイ済み Mirakurun にパッチ適用 (crc32 / DB 保存)"
 	@echo "  make setup-runtime     Alpine + Node.js をデバイスに構築 (初回のみ)"
 	@echo "  make start             Mirakurun 起動"
 	@echo "  make stop              Mirakurun 停止"
