@@ -31,6 +31,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <poll.h>
 #include <dlfcn.h>
 
 extern int *__errno(void);
@@ -101,16 +102,6 @@ static void core_encrypt(CORE_DATA *dst, CORE_DATA *src, CORE_PARAM *w, int32_t 
         core_pi3(&tmp, dst, w->key[5], w->key[6]); core_pi4(dst, &tmp, w->key[7]);
     }
 }
-static void core_decrypt(CORE_DATA *dst, CORE_DATA *src, CORE_PARAM *w, int32_t round) {
-    CORE_DATA tmp;
-    dst->l = src->l; dst->r = src->r;
-    for (int32_t i = 0; i < round; i++) {
-        core_pi4(&tmp, dst, w->key[7]); core_pi3(dst, &tmp, w->key[5], w->key[6]);
-        core_pi2(&tmp, dst, w->key[4]); core_pi1(dst, &tmp);
-        core_pi4(&tmp, dst, w->key[3]); core_pi3(dst, &tmp, w->key[1], w->key[2]);
-        core_pi2(&tmp, dst, w->key[0]); core_pi1(dst, &tmp);
-    }
-}
 
 /* MULTI2 descrambler context (round 4). */
 typedef struct {
@@ -141,21 +132,46 @@ static void m2_set_scramble_key(M2 *m, const uint8_t ks16[16]) {
 }
 /* In-place MULTI2 decrypt of a TS payload. type = transport_scrambling_control
  * (0x02 = even key, 0x03 = odd key). Mirrors libaribb25 decrypt_multi2. */
+static inline uint32_t m2_pi3(uint32_t l, uint32_t a, uint32_t b) {
+    uint32_t t0 = l + a;
+    uint32_t t1 = rol32(t0, 2) + t0 + 1;
+    uint32_t t2 = rol32(t1, 8) ^ t1;
+    uint32_t t3 = t2 + b;
+    uint32_t t4 = rol32(t3, 1) - t3;
+    return rol32(t4, 16) ^ (t4 | l);
+}
 static void m2_decrypt(M2 *m, int type, uint8_t *buf, int size) {
-    CORE_DATA src, dst, cbc;
+    CORE_DATA dst, cbc;
     CORE_PARAM *prm = (type == 0x02) ? &m->wrk[1] : &m->wrk[0];
+    /* The inverse of core_encrypt's rounds (pi4, pi3, pi2, pi1 in reverse
+     * key order), with the work keys and CBC state held in locals: through
+     * struct pointers the keys were reloaded for every block because the
+     * byte stores to buf may alias them. */
+    const uint32_t k0 = prm->key[0], k1 = prm->key[1], k2 = prm->key[2], k3 = prm->key[3];
+    const uint32_t k4 = prm->key[4], k5 = prm->key[5], k6 = prm->key[6], k7 = prm->key[7];
+    const int round = m->round;
+    uint32_t cl = m->cbc_init.l, cr = m->cbc_init.r;
     uint8_t *p = buf;
-    cbc.l = m->cbc_init.l; cbc.r = m->cbc_init.r;
     while (size >= 8) {
-        src.l = ld_be32(p + 0); src.r = ld_be32(p + 4);
-        core_decrypt(&dst, &src, prm, m->round);
-        dst.l ^= cbc.l; dst.r ^= cbc.r;
-        cbc.l = src.l; cbc.r = src.r;
-        p = st_be32(p, dst.l); p = st_be32(p, dst.r);
-        size -= 8;
+        uint32_t sl = ld_be32(p), sr = ld_be32(p + 4);
+        uint32_t l = sl, r = sr, t0, t1;
+        for (int i = 0; i < round; i++) {
+            t0 = r + k7; l ^= rol32(t0, 2) + t0 + 1;                        /* pi4 */
+            r ^= m2_pi3(l, k5, k6);                                         /* pi3 */
+            t0 = r + k4; t1 = rol32(t0, 1) + t0 - 1; l ^= rol32(t1, 4) ^ t1; /* pi2 */
+            r ^= l;                                                         /* pi1 */
+            t0 = r + k3; l ^= rol32(t0, 2) + t0 + 1;
+            r ^= m2_pi3(l, k1, k2);
+            t0 = r + k0; t1 = rol32(t0, 1) + t0 - 1; l ^= rol32(t1, 4) ^ t1;
+            r ^= l;
+        }
+        st_be32(p, l ^ cl); st_be32(p + 4, r ^ cr);
+        cl = sl; cr = sr;
+        p += 8; size -= 8;
     }
     if (size > 0) {
         uint8_t tmp[8];
+        cbc.l = cl; cbc.r = cr;
         core_encrypt(&dst, &cbc, prm, m->round);
         st_be32(tmp + 0, dst.l); st_be32(tmp + 4, dst.r);
         for (int i = 0; i < size; i++) p[i] ^= tmp[i];
@@ -554,7 +570,24 @@ static int probe_unmapped(int pid, const uint8_t *pkt) {
 static volatile int g_running = 1;
 static void on_sig(int s) { (void)s; g_running = 0; }
 
-/* Descramble (if needed) and write one TS packet to stdout. */
+/* Output is batched: one write() per 188-byte packet cost ~2/3 of b21dec's
+ * CPU on GR (kernel time 23% vs 11% user of one core at ~2 MB/s).  Packets
+ * are appended here and written when the buffer fills or when no more input
+ * is immediately readable, so batching adds no latency. */
+static uint8_t g_out[TS_PKT * 348];     /* ~64 KiB, a whole pipe buffer */
+static int     g_out_len;
+
+static void flush_out(void) {
+    int w = 0;
+    while (w < g_out_len) {
+        ssize_t k = write(STDOUT_FILENO, g_out + w, g_out_len - w);
+        if (k <= 0) { g_running = 0; break; }
+        w += (int)k;
+    }
+    g_out_len = 0;
+}
+
+/* Descramble (if needed) and queue one TS packet for stdout. */
 static void emit_packet(uint8_t *pkt) {
     int pid = ((pkt[1] & 0x1f) << 8) | pkt[2];
     int tsc = (pkt[3] >> 6) & 3;
@@ -574,12 +607,9 @@ static void emit_packet(uint8_t *pkt) {
         }
         /* else: keys not ready — pass through */
     }
-    ssize_t w = 0;
-    while (w < TS_PKT) {
-        ssize_t k = write(STDOUT_FILENO, pkt + w, TS_PKT - w);
-        if (k <= 0) { g_running = 0; break; }
-        w += k;
-    }
+    memcpy(g_out + g_out_len, pkt, TS_PKT);
+    g_out_len += TS_PKT;
+    if (g_out_len == (int)sizeof g_out) flush_out();
 }
 
 /* Ready to stop holding once every PMT listed in the PAT has been parsed and
@@ -699,9 +729,15 @@ int main(int argc, char **argv) {
                 emit_packet(pkt);
             }
         }
+        /* Write out only when the next read would block (or the buffer
+         * filled up in emit_packet), so small input chunks are coalesced
+         * without adding latency. */
+        struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
+        if (poll(&pfd, 1, 0) <= 0) flush_out();
     }
 
     if (g_pend_n > 0) flush_pending();   /* EOF while still holding */
+    flush_out();
 
     if (verbose) print_stats();
     return 0;
