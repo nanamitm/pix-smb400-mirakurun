@@ -143,7 +143,7 @@ chroot "$ROOTFS" /bin/sh -l -c "
     export PROGRAMS_DB_PATH=/data/local/tmp/mirakurun/db/programs.json
     export LOGO_DATA_DIR_PATH=/data/local/tmp/mirakurun/logo-data
     cd /data/local/tmp/mirakurun
-    node --max-semi-space-size=32 \
+    node --max-semi-space-size=2 \
          --max-old-space-size=256 \
          lib/server.js
 " >> "$LOG" 2>&1
