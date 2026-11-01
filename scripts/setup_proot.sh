@@ -35,9 +35,9 @@ ROOTFS_DIR="$DEVICE_TMP/mirakurun-root"
 WORK_DIR=$(mktemp -d)
 trap "rm -rf '$WORK_DIR'" EXIT
 
-# Alpine 3.23 系は nodejs 24.x (LTS) を提供する。
-ALPINE_VERSION=3.23
-ALPINE_PATCH=3.23.6
+# Alpine 3.24 系は nodejs-current で Node.js 26.x を提供する (nodejs は 24.x のまま)。
+ALPINE_VERSION=3.24
+ALPINE_PATCH=3.24.3
 ALPINE_ARCH=armhf
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/${ALPINE_ARCH}/alpine-minirootfs-${ALPINE_PATCH}-${ALPINE_ARCH}.tar.gz"
 
@@ -58,6 +58,16 @@ ensure_alpine_tar() {
 alpine_present=$($ADB shell "[ -f '$ROOTFS_DIR/etc/alpine-release' ] && echo yes || echo no" | tr -d '\r\n')
 case "$alpine_present" in
     *yes*)
+        # An older rootfs cannot get Node.js 26: Alpine 3.23's nodejs-current is 24.x.
+        alpine_release=$($ADB shell "cat '$ROOTFS_DIR/etc/alpine-release'" | tr -d '\r\n')
+        case "$alpine_release" in
+            "$ALPINE_VERSION".*) ;;
+            *)
+                echo "[!] $ROOTFS_DIR is Alpine $alpine_release; this setup needs Alpine $ALPINE_VERSION."
+                echo "[!] 'make stop' and move the old rootfs aside, then re-run: make setup-runtime"
+                exit 1
+                ;;
+        esac
         echo "=== Step 1-2: Alpine rootfs already on device — skipping download/extract. ==="
         ;;
     *)
@@ -137,7 +147,7 @@ fi
 if ! grep -q " $ROOTFS/dev " /proc/mounts; then
     mount -o bind /dev "$ROOTFS/dev" && mounted_dev=1
 fi
-chroot "$ROOTFS" /bin/sh -c "export PATH=/usr/sbin:/usr/bin:/sbin:/bin; apk update && apk add nodejs npm"
+chroot "$ROOTFS" /bin/sh -c "export PATH=/usr/sbin:/usr/bin:/sbin:/bin; apk update && apk add nodejs-current npm"
 RC=$?
 [ "$mounted_dev" = 1 ]  && umount "$ROOTFS/dev"
 [ "$mounted_proc" = 1 ] && umount "$ROOTFS/proc"
