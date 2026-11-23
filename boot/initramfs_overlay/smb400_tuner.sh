@@ -88,11 +88,11 @@ case "$CHANNEL" in
             "$BINDIR/tuner-stream-bs-ng 0 1 $IF_KHZ $TSID | $BINDIR/b21dec" &
         CHROOT_PID=$!
         trap "pkill -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
-              pkill -f b21dec 2>/dev/null; \
+              pkill -s 0 b21dec 2>/dev/null; \
               sleep 1; \
               kill -9 $CHROOT_PID 2>/dev/null; \
               pkill -9 -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
-              pkill -9 -f b21dec 2>/dev/null; \
+              pkill -9 -s 0 b21dec 2>/dev/null; \
               pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
         pkill -9 -f "tuner-stream-bs-ng 0 1 $IF_KHZ" 2>/dev/null || true
@@ -120,11 +120,11 @@ case "$CHANNEL" in
             "$BINDIR/tuner-stream-bs-ng 0 1 $IF_KHZ 0 | $BINDIR/b21dec" &
         CHROOT_PID=$!
         trap "pkill -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
-              pkill -f b21dec 2>/dev/null; \
+              pkill -s 0 b21dec 2>/dev/null; \
               sleep 1; \
               kill -9 $CHROOT_PID 2>/dev/null; \
               pkill -9 -f 'tuner-stream-bs-ng 0 1 $IF_KHZ' 2>/dev/null; \
-              pkill -9 -f b21dec 2>/dev/null; \
+              pkill -9 -s 0 b21dec 2>/dev/null; \
               pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
         pkill -9 -f "tuner-stream-bs-ng 0 1 $IF_KHZ" 2>/dev/null || true
@@ -179,11 +179,11 @@ case "$CHANNEL" in
         # SIGTERM first so tuner-stream-ng can call dmx_deinit() — SIGKILL skips it and
         # leaves a stale DMX channel that blocks the next run.
         trap "pkill -f 'tuner-stream-ng 0 0 32 $IF_KHZ' 2>/dev/null; \
-              pkill -f b21dec 2>/dev/null; \
+              pkill -s 0 b21dec 2>/dev/null; \
               sleep 1; \
               kill -9 $CHROOT_PID 2>/dev/null; \
               pkill -9 -f 'tuner-stream-ng 0 0 32 $IF_KHZ' 2>/dev/null; \
-              pkill -9 -f b21dec 2>/dev/null; \
+              pkill -9 -s 0 b21dec 2>/dev/null; \
               pkill -9 tunertest 2>/dev/null; exit 0" TERM INT
         wait $CHROOT_PID
         pkill -9 -f "tuner-stream-ng 0 0 32 $IF_KHZ" 2>/dev/null || true
