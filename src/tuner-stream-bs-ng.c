@@ -13,9 +13,22 @@
  *   keepalive null packets are sent to the HTTP client.
  *
  * Usage: tuner-stream-bs-ng <tunerId> <mode> <freqKHz> <streamId>
+ *
+ * LNB power: on while running if LNB_POWER_FILE starts with "1", otherwise
+ * untouched (see "LNB power" below).
  */
 
+/* Built against glibc headers but linked against bionic.  With _GNU_SOURCE,
+ * glibc >= 2.38 redirects strtol() and the scanf family to __isoc23_*()
+ * (C23 "0b" prefix support), which bionic does not have; turn that off. */
+#include <features.h>
+#undef  __GLIBC_USE_C23_STRTOL
+#define __GLIBC_USE_C23_STRTOL 0
+#undef  __GLIBC_USE_C2X_STRTOL   /* glibc 2.38 spelling */
+#define __GLIBC_USE_C2X_STRTOL 0
+
 #include <stdint.h>
+#include <limits.h>
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
@@ -29,6 +42,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <sys/prctl.h>
 
 extern int *__errno(void);
 #undef  errno
@@ -314,6 +328,191 @@ static void stream_relay(int pipe_rd, int ts_fd, int mode)
     free(buf);
 }
 
+/*===== LNB power =====*/
+
+/*
+ * The OEM pxhwservice switches the LNB supply with a plain GPIO (output high
+ * = on), but stop_android_tv.sh force-stops it before BOOT_COMPLETED, so its
+ * saved setting never reaches the hardware.  Drive the same GPIO via sysfs,
+ * picking the pin exactly like pxhwservice: the PCB revision straps select
+ * which jp.pixela.system.gpio.lnb.num.<key> applies.
+ *
+ * Opt-in: "1" in LNB_POWER_FILE.  Without it the GPIO is left untouched.
+ * The LNB is on only while we run: the monitor process that turned it on
+ * turns it off when it stops (we exit or die), so it is never left on without
+ * short detection.  Only a SIGKILL of the monitor itself leaves it on.
+ */
+#define LNB_POWER_FILE     "/data/local/tmp/.lnb_power"
+/* tunertest rewrites GPIO 8 on every satellite tune (mode 1/2 = off), so a
+ * board whose LNB pin is 8 cannot be powered from here. */
+#define TUNERTEST_LNB_PIN  8
+
+extern int __system_property_get(const char *name, char *value);
+
+static int prop_int(const char *name, int def)
+{
+    char v[92];   /* PROP_VALUE_MAX */
+    if (__system_property_get(name, v) <= 0) return def;
+    char *end;
+    errno = 0;
+    long value = strtol(v, &end, 10);
+    if (errno || end == v || *end || value < 0 || value > INT_MAX) {
+        logm("L", "LNB: invalid integer property %s=%s\n", name, v);
+        return -1;
+    }
+    return (int)value;
+}
+
+static int sysfs_write(const char *path, const char *s)
+{
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    size_t len = strlen(s);
+    ssize_t n;
+    do { n = write(fd, s, len); } while (n < 0 && errno == EINTR);
+    int error = n < 0 ? errno : EIO;
+    close(fd);
+    if (n == (ssize_t)len) return 0;
+    errno = error;
+    return -1;
+}
+
+/* Export a GPIO if needed and set its direction: "in", "high" or "low". */
+static int gpio_setup(int pin, const char *dir)
+{
+    char path[64];
+    snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/direction", pin);
+    if (access(path, F_OK) != 0) {
+        char num[16];
+        snprintf(num, sizeof(num), "%d", pin);
+        /* Another tuner may have exported the same GPIO concurrently. */
+        if (sysfs_write("/sys/class/gpio/export", num) < 0 && errno != EBUSY)
+            return -1;
+    }
+    return sysfs_write(path, dir);
+}
+
+static int gpio_read(int pin)
+{
+    char path[64], c;
+    snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", pin);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    ssize_t n;
+    do { n = read(fd, &c, 1); } while (n < 0 && errno == EINTR);
+    close(fd);
+    return n == 1 && (c == '0' || c == '1') ? c - '0' : -1;
+}
+
+static void lnb_power_cut(int lnb_pin)
+{
+    if (gpio_setup(lnb_pin, "low") < 0)
+        logm("L", "LNB: cannot turn GPIO %d OFF: %s\n", lnb_pin, strerror(errno));
+    else
+        logm("L", "LNB power OFF (GPIO %d)\n", lnb_pin);
+}
+
+/* Poll the short detector every second like pxhwservice; cut the LNB on a
+ * short, or when told to stop (SIGTERM from main, from the parent-death
+ * signal, or from Mirakurun / the tuner script). */
+static void lnb_monitor(int lnb_pin, int short_pin, int short_nl)
+{
+    while (g_running) {
+        sleep(1);
+        if (!g_running) break;
+        int v = gpio_read(short_pin);
+        if (v < 0 || v != short_nl) {
+            logm("L", "LNB: short detector GPIO %d=%d (normal=%d); cutting power\n",
+                 short_pin, v, short_nl);
+            break;
+        }
+    }
+    lnb_power_cut(lnb_pin);
+}
+
+/* Returns the monitor PID, or -1 if LNB power was not requested/available. */
+static pid_t lnb_power_apply(int ts_fd)
+{
+    char c = 0;
+    int fd = open(LNB_POWER_FILE, O_RDONLY);
+    if (fd < 0) return -1;
+    ssize_t n = read(fd, &c, 1);
+    close(fd);
+    if (n != 1 || c != '1') return -1;
+
+    int pcb1 = prop_int("jp.pixela.system.gpio.pcb_ver1", -1);
+    int pcb0 = prop_int("jp.pixela.system.gpio.pcb_ver0", -1);
+    if (pcb1 < 0 || pcb0 < 0) {
+        logm("L", "LNB: PCB revision properties missing, LNB untouched\n");
+        return -1;
+    }
+    int key = 0;
+    if (pcb1 != 65535 || pcb0 != 65535) {
+        if (pcb1 == 65535 || pcb0 == 65535) {
+            logm("L", "LNB: incomplete PCB revision GPIO configuration, LNB untouched\n");
+            return -1;
+        }
+        int v1 = gpio_setup(pcb1, "in") == 0 ? gpio_read(pcb1) : -1;
+        int v0 = gpio_setup(pcb0, "in") == 0 ? gpio_read(pcb0) : -1;
+        if (v1 < 0 || v0 < 0) {
+            logm("L", "LNB: cannot read PCB revision GPIO %d/%d, LNB untouched\n", pcb1, pcb0);
+            return -1;
+        }
+        key = (v0 ? 1 : 0) + (v1 ? 2 : 0);
+    }
+
+    char name[64];
+    snprintf(name, sizeof(name), "jp.pixela.system.gpio.lnb.num.%d", key);
+    int lnb_pin = prop_int(name, -1);
+    snprintf(name, sizeof(name), "jp.pixela.system.gpio.lnb_short.num.%d", key);
+    int short_pin = prop_int(name, 29);
+    snprintf(name, sizeof(name), "jp.pixela.system.gpio.lnb_short.nl.%d", key);
+    int short_nl = prop_int(name, 0);
+
+    if (lnb_pin < 0 || lnb_pin == 65535 || lnb_pin == TUNERTEST_LNB_PIN ||
+        short_pin < 0 || short_pin == 65535 || short_pin == lnb_pin ||
+        (short_nl != 0 && short_nl != 1) ||
+        lnb_pin == pcb1 || lnb_pin == pcb0 ||
+        short_pin == pcb1 || short_pin == pcb0) {
+        logm("L", "LNB: unsupported GPIO configuration (PCB key %d, LNB=%d, short=%d, normal=%d), LNB untouched\n",
+             key, lnb_pin, short_pin, short_nl);
+        return -1;
+    }
+    if (gpio_setup(short_pin, "in") < 0) {
+        logm("L", "LNB: short GPIO %d setup failed, LNB untouched\n", short_pin);
+        return -1;
+    }
+
+    pid_t parent = getpid();
+    pid_t monitor = fork();
+    if (monitor < 0) {
+        logm("L", "LNB: monitor fork failed: %s; LNB untouched\n", strerror(errno));
+        return -1;
+    }
+    if (monitor == 0) {
+        close(ts_fd);
+        if (prctl(PR_SET_PDEATHSIG, SIGTERM, 0L, 0L, 0L) < 0) {
+            logm("L", "LNB: monitor parent-death setup failed: %s; LNB untouched\n", strerror(errno));
+            _exit(1);
+        }
+        if (getppid() != parent || !g_running)
+            _exit(1);
+        /* No detector check before power-on: the detector reports the LNB
+         * output, so it reads abnormal while the LNB is off (PCB key 1:
+         * GPIO 29 = 0 when off, = 1 (normal) within 100 ms of power-on).
+         * Like pxhwservice, power on and let the 1 s poll catch a short. */
+        if (gpio_setup(lnb_pin, "high") < 0) {
+            logm("L", "LNB: GPIO %d power ON failed: %s\n", lnb_pin, strerror(errno));
+            _exit(1);
+        }
+        logm("L", "LNB power ON (GPIO %d, PCB key %d, short GPIO %d nl=%d)\n",
+             lnb_pin, key, short_pin, short_nl);
+        lnb_monitor(lnb_pin, short_pin, short_nl);
+        _exit(0);
+    }
+    return monitor;
+}
+
 /*===== Main =====*/
 
 int main(int argc, char **argv)
@@ -324,8 +523,9 @@ int main(int argc, char **argv)
             "  tunerId:  0 or 1\n"
             "  mode:     1=ISDB-S (BS), 2=ISDB-S3 (BS4K)\n"
             "  freqKHz:  IF frequency in kHz (sat_GHz*1e6 - 10678000)\n"
-            "  streamId: 0=auto\n",
-            argv[0]);
+            "  streamId: 0=auto\n"
+            "  LNB power: on while running if %s starts with \"1\" (default untouched)\n",
+            argv[0], LNB_POWER_FILE);
         return 1;
     }
 
@@ -355,6 +555,8 @@ int main(int argc, char **argv)
         int dn = open("/dev/null", O_WRONLY);
         if (dn >= 0) { dup2(dn, STDOUT_FILENO); close(dn); }
     }
+
+    pid_t lnb_monitor_pid = lnb_power_apply(ts_fd);
 
     while (g_running) {
         g_pipe_rd = -1;
@@ -404,6 +606,11 @@ int main(int argc, char **argv)
 
     if (g_pipe_rd >= 0) close(g_pipe_rd);
     if (g_child > 0) { kill(g_child, SIGTERM); waitpid(g_child, NULL, 0); }
+    if (lnb_monitor_pid > 0) {
+        /* The monitor turns the LNB off before it exits. */
+        kill(lnb_monitor_pid, SIGTERM);
+        while (waitpid(lnb_monitor_pid, NULL, 0) < 0 && errno == EINTR) {}
+    }
     close(ts_fd);
 
     logm("-", "tuner-stream-bs-ng: exit\n");
