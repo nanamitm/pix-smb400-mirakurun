@@ -341,8 +341,13 @@ static void stream_relay(int pipe_rd, int ts_fd, int mode)
  * The LNB is on only while we run: the monitor process that turned it on
  * turns it off when it stops (we exit or die), so it is never left on without
  * short detection.  Only a SIGKILL of the monitor itself leaves it on.
+ *
+ * A short is latched: the monitor records it in LNB_SHORT_FILE, and later
+ * runs leave the GPIO untouched (LNB off) until that file is removed, so a
+ * faulty cable or dish is not powered again on every tune.
  */
 #define LNB_POWER_FILE     "/data/local/tmp/.lnb_power"
+#define LNB_SHORT_FILE     "/data/local/tmp/.lnb_short"
 /* tunertest rewrites GPIO 8 on every satellite tune (mode 1/2 = off), so a
  * board whose LNB pin is 8 cannot be powered from here. */
 #define TUNERTEST_LNB_PIN  8
@@ -412,6 +417,17 @@ static void lnb_power_cut(int lnb_pin)
         logm("L", "LNB power OFF (GPIO %d)\n", lnb_pin);
 }
 
+static void lnb_latch_short(int short_pin, int v, int short_nl)
+{
+    char line[64];
+    int len = snprintf(line, sizeof(line), "short detector GPIO %d=%d (normal=%d)\n",
+                       short_pin, v, short_nl);
+    int fd = open(LNB_SHORT_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0 || write(fd, line, len) != len)
+        logm("L", "LNB: cannot record the short in %s: %s\n", LNB_SHORT_FILE, strerror(errno));
+    if (fd >= 0) close(fd);
+}
+
 /* Poll the short detector every second like pxhwservice; cut the LNB on a
  * short, or when told to stop (SIGTERM from main, from the parent-death
  * signal, or from Mirakurun / the tuner script). */
@@ -421,11 +437,17 @@ static void lnb_monitor(int lnb_pin, int short_pin, int short_nl)
         sleep(1);
         if (!g_running) break;
         int v = gpio_read(short_pin);
-        if (v < 0 || v != short_nl) {
-            logm("L", "LNB: short detector GPIO %d=%d (normal=%d); cutting power\n",
-                 short_pin, v, short_nl);
-            break;
+        if (v == short_nl) continue;
+        lnb_power_cut(lnb_pin);
+        if (v < 0) {
+            /* Not a detected short, so not latched. */
+            logm("L", "LNB: cannot read short detector GPIO %d; power cut\n", short_pin);
+        } else {
+            logm("L", "LNB: short detected (GPIO %d=%d, normal=%d); kept off until %s is removed\n",
+                 short_pin, v, short_nl, LNB_SHORT_FILE);
+            lnb_latch_short(short_pin, v, short_nl);
         }
+        return;
     }
     lnb_power_cut(lnb_pin);
 }
@@ -439,6 +461,11 @@ static pid_t lnb_power_apply(int ts_fd)
     ssize_t n = read(fd, &c, 1);
     close(fd);
     if (n != 1 || c != '1') return -1;
+    if (access(LNB_SHORT_FILE, F_OK) == 0) {
+        logm("L", "LNB: short recorded in %s, LNB untouched (remove the file once fixed)\n",
+             LNB_SHORT_FILE);
+        return -1;
+    }
 
     int pcb1 = prop_int("jp.pixela.system.gpio.pcb_ver1", -1);
     int pcb0 = prop_int("jp.pixela.system.gpio.pcb_ver0", -1);
@@ -524,8 +551,9 @@ int main(int argc, char **argv)
             "  mode:     1=ISDB-S (BS), 2=ISDB-S3 (BS4K)\n"
             "  freqKHz:  IF frequency in kHz (sat_GHz*1e6 - 10678000)\n"
             "  streamId: 0=auto\n"
-            "  LNB power: on while running if %s starts with \"1\" (default untouched)\n",
-            argv[0], LNB_POWER_FILE);
+            "  LNB power: on while running if %s starts with \"1\" (default untouched);\n"
+            "             after a short it stays off until %s is removed\n",
+            argv[0], LNB_POWER_FILE, LNB_SHORT_FILE);
         return 1;
     }
 
