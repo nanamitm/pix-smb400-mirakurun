@@ -217,12 +217,13 @@ setup-runtime:
 
 # ---- 起動・停止 ----
 
+# -f で探すプロセスを pkill ではなく kill $(pgrep -f ...) で止める理由は stop の説明を参照。
 start:
 	@echo "[*] Stopping any existing session..."
 	-$(ADB) shell "pkill -9 Mirakurun 2>/dev/null; \
 	    kill -9 \$$(pgrep -f 'start_mirakurun[.]sh' 2>/dev/null) 2>/dev/null; \
 	    pkill -9 b61dec 2>/dev/null; pkill -9 tunertest 2>/dev/null; \
-	    pkill -9 -f 'node.*mdns_responder[.]js' 2>/dev/null; true"
+	    kill -9 \$$(pgrep -f 'node.*mdns_responder[.]js' 2>/dev/null) 2>/dev/null; true"
 	@sleep 2
 	@echo "[*] Starting Mirakurun..."
 	$(ADB) shell "setsid sh $(DEVICE_TMP)/start_mirakurun.sh \
@@ -238,15 +239,23 @@ start:
 	    echo "(まだ応答がありません — 'make log' で確認してください)"; \
 	fi
 
+# tuner-stream-bs-ng の LNB 監視プロセスは SIGTERM なら LNB 電源を切ってから終了するが、
+# SIGKILL では電源が入ったまま残るため、強制終了の前に SIGTERM を送って 1 秒待つ。
+# 端末の toybox (0.7.3) の pkill は -9 などのシグナル指定もパターンとして扱うため、-f と
+# 併用すると "-9" を含む adb shell 自身のコマンドラインに一致してシェルごと終了し、以降の
+# コマンドが実行されない。そのため -f で探すものは kill $(pgrep -f ...) で止める。
+# パターンは 1 文字を [] で囲み、このコマンド全体の文字列に一致しない形にする
+# （一致すると同様にシェル自身が終了する）。
 stop:
 	-$(ADB) shell "pkill -9 Mirakurun 2>/dev/null; \
 	    kill -9 \$$(pgrep -f 'start_mirakurun[.]sh' 2>/dev/null) 2>/dev/null; \
-	    pkill -9 -f 'node.*server\.js' 2>/dev/null; \
+	    kill -9 \$$(pgrep -f 'node.*server\.js' 2>/dev/null) 2>/dev/null; \
+	    kill \$$(pgrep -f 'tuner-strea[m]-bs-ng' 2>/dev/null) 2>/dev/null && sleep 1; \
 	    pkill -9 b61dec 2>/dev/null; \
 	    pkill -9 b21dec 2>/dev/null; \
 	    pkill -9 tunertest 2>/dev/null; \
-	    pkill -9 -f tuner-stream 2>/dev/null; \
-	    pkill -9 -f 'node.*mdns_responder[.]js' 2>/dev/null; \
+	    kill -9 \$$(pgrep -f 'tuner-strea[m]' 2>/dev/null) 2>/dev/null; \
+	    kill -9 \$$(pgrep -f 'node.*mdns_responder[.]js' 2>/dev/null) 2>/dev/null; \
 	    sleep 1; true"
 	-$(ADB) shell " \
 	    grep mirakurun-root /proc/mounts | while read d mp r; do echo \"\$$mp\"; done | sort -r | \
