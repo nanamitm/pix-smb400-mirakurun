@@ -514,6 +514,22 @@ ffplay  "http://<デバイスのIPアドレス>:40772/api/services/<serviceId>/s
 > CS は受信できるトランスポンダ・サービスが契約により異なります。
 > `config/tuners.yml` で `CS` タイプが有効になっている必要があります（本リポジトリでは有効化済み）。
 
+### BS/CS アンテナへの電源供給（LNB 電源）について
+
+BS/CS アンテナへの電源供給は、既定では行いません（LNB 給電の設定を扱う純正のサービス `pxhwservice` は起動時に停止するため、純正の設定は反映されません）。
+次のコマンドで `.lnb_power` ファイルを作成すると、BS/CS アンテナへの電源供給が有効になります。
+
+```sh
+adb -s <デバイスのIPアドレス>:5555 shell "echo 1 > /data/local/tmp/.lnb_power"
+```
+
+- `tuner-stream-bs-ng` が受信している間だけ給電し、受信を終えると停止します。ファイルが無い、または先頭が `1` でない場合は給電しません。
+- 受信中は 1 秒ごとに短絡を確認し、短絡を検出すると給電を停止し `/data/local/tmp/.lnb_short` を作ります。このファイルがある間は給電しないため、ケーブルやアンテナを点検してから削除してください。
+
+```sh
+adb -s <デバイスのIPアドレス>:5555 shell "cat /data/local/tmp/.lnb_short; rm /data/local/tmp/.lnb_short"
+```
+
 ### ffplay でリアルタイム視聴
 
 再生にはmmt/tlvに対応した [FFmpeg](https://github.com/superfashi/FFmpeg) が必要です。
